@@ -69,7 +69,7 @@ class Config:
                 with open(path, 'r') as f:
                     data = json.load(f)
                 for key in data.keys():
-                    if not key in ["sr", "buf", "gain", "port", "in_dev", "out_dev"]:
+                    if key in ["sr", "buf", "gain", "port", "in_dev", "out_dev"]:
                         raise ValueError(f"Invalid path: {path} - file exists but contains keys this program can't generate, possibly config file for another program?")
             except FileNotFoundError:
                 pass
