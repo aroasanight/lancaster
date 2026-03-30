@@ -132,12 +132,18 @@ class TestConfigClass(unittest.TestCase):
 
 
     # save/load
+
     def test_save_and_load(self):
+    
+        # TODO put in in/out dev tests once implemented in script
+    
         c = Config(path="test_config.json")
         c.set_sr(44100)
         c.set_buf(300)
         c.set_gain(2.0)
         c.set_port(5006)
+        # c.set_in_dev(some_value)
+        # c.set_out_dev(some_value)
         c.save()
 
         c2 = Config(path="test_config.json")
@@ -145,6 +151,8 @@ class TestConfigClass(unittest.TestCase):
         self.assertEqual(c2.buf, 300)
         self.assertEqual(c2.gain, 2.0)
         self.assertEqual(c2.port, 5006)
+        # self.assertEqual(c2.in_dev, some_value)
+        # self.assertEqual(c2.out_dev, some_value)
 
 
 if __name__ == "__main__":
