@@ -33,10 +33,28 @@ class Config:
     # SET methods w/ validation
 
     def set_path(self, path):
-        if path.split(".")[-1] != "json"
+        if path.split(".")[-1] != "json": raise ValueError
+
+        
         # TODO check if file either doesn't exist or exists but is valid config
         # if file exists and is invalid config refuse to change path and throw error
         # to avoid overwriting existing config files for other programs
+    
+    def set_sr(self, sr:int):
+        if not sr in [8000, 11025, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000]: raise ValueError
+        else: self.sr = sr
+    
+    def set_buf(self, buf:int):
+        if buf < 0: raise ValueError
+        else: self.buf = buf
+    
+    def set_gain(self, gain:float):
+        if gain <= 0.0 or gain >= 8.0: raise ValueError
+        else: self.gain = gain
+    
+    def set_port(self, port:int):
+        if port < 1024 or port > 65535: raise ValueError
+        else: self.port = port
     
 
     # save/load to/from json
