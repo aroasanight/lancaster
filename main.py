@@ -3,9 +3,6 @@ import os
 import socket
 
 
-
-
-
 # check if port is free
 # code adapted from https://www.geeksforgeeks.org/python/python-simple-port-scanner-with-sockets/ 
 def port_in_use(port:int):
@@ -34,7 +31,6 @@ class Config:
             self.save()
     
     # to GET use config.var_name as a direct reference
-
 
     # SET methods w/ validation
 
