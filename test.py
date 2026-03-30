@@ -8,6 +8,10 @@ class TestConfigClass(unittest.TestCase):
     def setUp(self):
         if os.path.exists("test_config.json"):
             os.remove("test_config.json")
+    
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
 
 
 
@@ -127,7 +131,20 @@ class TestConfigClass(unittest.TestCase):
 
 
 
+    # save/load
+    def test_save_and_load(self):
+        c = Config(path="test_config.json")
+        c.set_sr(44100)
+        c.set_buf(300)
+        c.set_gain(2.0)
+        c.set_port(5006)
+        c.save()
 
+        c2 = Config(path="test_config.json")
+        self.assertEqual(c2.sr, 44100)
+        self.assertEqual(c2.buf, 300)
+        self.assertEqual(c2.gain, 2.0)
+        self.assertEqual(c2.port, 5006)
 
 
 if __name__ == "__main__":
