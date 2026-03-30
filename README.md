@@ -1,5 +1,7 @@
 # lancaster
 
+<img src="https://www.lancaster.ac.uk/media/lancaster-university/content-assets/images/external-relations/hero-background-panel-and-simple-image/Lancaster-Castle-skyline-landing-hero.jpg" width="100%" alt="Lancaster Panorama" />
+
 because it **casts** audio. over a **lan**. so its a **lancaster**... please laugh
 
 # what is this?
