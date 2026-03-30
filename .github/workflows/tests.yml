@@ -2,13 +2,6 @@ name: Unit Tests
 
 on: [push, pull_request]
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-permissions:
-  contents: read
-  checks: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -22,17 +15,8 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install pytest
-        run: pip install pytest
+        run: |
+          pip install -r requirements.txt
 
       - name: Run tests
-        run: pytest test.py -v --junit-xml=test-results.xml
-
-      - name: Publish test results
-        uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
-        with:
-          files: test-results.xml
-          report_individual_runs: "true"
+        run: python -m unittest discover -s . -p "test*.py" -v
