@@ -1,5 +1,4 @@
 import json
-import os
 import socket
 
 
@@ -16,19 +15,48 @@ def port_in_use(port:int):
 
 
 class Config:
-    def __init__(self, path="config.json", sr=48000, buf=500, gain=1.0, port=5005, in_dev=None, out_dev=None):
-        self.path = path
-        self.sr = sr
-        self.buf = buf
-        self.gain = gain
-        self.port = port
-        self.in_dev = in_dev
-        self.out_dev = out_dev
+    def __init__(self, path="config.json", sr=None, buf=None, gain=None, port=None, in_dev=None, out_dev=None):
+        self.path   = path
+        self.sr     = 48000
+        self.buf    = 500
+        self.gain   = 1.0
+        self.port   = 5005
+        self.in_dev = None
+        self.out_dev = None
+
+        valid_path = False
+        while not valid_path:
+            try: 
+                self.set_path(path)
+                valid_path = True
+            except Exception as e:
+                try:
+                    path = input(f"Unable to use config path \"{path}\" due to the following exception: {e}\nPlease enter a new filename to use, ending in .json: ")
+                except EOFError:
+                    raise RuntimeError(f"Unable to use config path, and no interactive input available to fix. Re-run the program with either a different path specified, or fix the issue loading the current path.")
 
         try:
             self.load()
         except FileNotFoundError:
-            self.save()
+            pass
+
+        if sr is not None:
+            try: self.set_sr(sr)
+            except Exception: pass
+            
+        if buf is not None:
+            try: self.set_buf(buf)
+            except Exception: pass
+
+        if gain is not None:
+            try: self.set_gain(gain)
+            except Exception: pass
+
+        if port is not None:
+            try: self.set_port(port)
+            except Exception: pass
+        
+        self.save()
     
     # to GET use config.var_name as a direct reference
 
@@ -92,4 +120,6 @@ class Config:
         self.set_port(data.get("port", self.port))
         # self.set_in_dev(data.get("in_dev", self.in_dev))
         # self.set_out_dev(data.get("out_dev", self.out_dev))
+
+        self.save()
         
