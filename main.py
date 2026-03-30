@@ -1,4 +1,22 @@
 import json
+import os
+import socket
+
+
+
+
+
+# check if port is free
+# code adapted from https://www.geeksforgeeks.org/python/python-simple-port-scanner-with-sockets/ 
+def port_in_use(port:int):
+    with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as s:
+        try: 
+            s.bind(("",port))
+            return False
+        except OSError:
+            return True
+
+
 
 class Config:
     def __init__(self, path="config.json", sr=48000, buf=500, gain=1.0, port=5005, in_dev=None, out_dev=None):
@@ -13,7 +31,7 @@ class Config:
         try:
             self.load()
         except FileNotFoundError:
-            pass
+            self.save()
     
     # to GET use config.var_name as a direct reference
 
@@ -43,9 +61,7 @@ class Config:
 
     def set_port(self, port:int):
         if port < 1024 or port > 65535: raise ValueError(f"Invalid port: {str(port)} - must be greater than or equal to 1024 and less than or equal to 65535")
-
-        # TODO check if port is in use
-
+        elif port_in_use(port): raise ValueError(f"Invalid port: {str(port)} - port in use by another program on this host")
         else: self.port = port
     
 
