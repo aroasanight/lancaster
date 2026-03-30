@@ -3,3 +3,4 @@ __pycache__
 config.json
 test_config.json
 notes.txt
+fix-clipboard.py
