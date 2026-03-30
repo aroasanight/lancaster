@@ -97,5 +97,3 @@ class Config:
         # self.set_in_dev(data.get("in_dev", self.in_dev))
         # self.set_out_dev(data.get("out_dev", self.out_dev))
         
-config = Config()
-
