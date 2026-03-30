@@ -40,12 +40,16 @@ class Config:
 
     def set_path(self, path:str):
         if path.split(".")[-1] != "json": raise ValueError(f"Invalid path: {path} - filename must end in .json")
-
-        # TODO check if file either doesn't exist or exists but is valid config
-        # if file exists and is invalid config refuse to change path and throw error
-        # to avoid overwriting existing config files for other programs
-
-        else: self.path = path
+        else: 
+            try:
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                for key in data.keys():
+                    if not key in ["sr", "buf", "gain", "port", "in_dev", "out_dev"]:
+                        raise ValueError(f"Invalid path: {path} - file exists but contains keys this program can't generate, possibly config file for another program?")
+            except FileNotFoundError:
+                pass
+            self.path = path
 
     def set_sr(self, sr:int):
         if not sr in [8000, 11025, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000]: raise ValueError(f"Invalid Sample rate: {str(sr)} - must be one of 8000, 11025, 22050, 32000, 44100, 48000, 88200, 96000, 176400, or 192000")
@@ -63,6 +67,8 @@ class Config:
         if port < 1024 or port > 65535: raise ValueError(f"Invalid port: {str(port)} - must be greater than or equal to 1024 and less than or equal to 65535")
         elif port_in_use(port): raise ValueError(f"Invalid port: {str(port)} - port in use by another program on this host")
         else: self.port = port
+    
+    # TODO in_dev and out_dev setters
     
 
     # save/load to/from json
@@ -88,8 +94,8 @@ class Config:
         self.set_buf(data.get("buf", self.buf))
         self.set_gain(data.get("gain", self.gain))
         self.set_port(data.get("port", self.port))
-        self.set_in_dev(data.get("in_dev", self.in_dev))
-        self.set_out_dev(data.get("out_dev", self.out_dev))
+        # self.set_in_dev(data.get("in_dev", self.in_dev))
+        # self.set_out_dev(data.get("out_dev", self.out_dev))
         
 config = Config()
 
