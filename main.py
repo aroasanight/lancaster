@@ -114,12 +114,19 @@ class Config:
         with open(self.path, 'r') as f:
             data = json.load(f)
         
-        self.set_sr(data.get("sr", self.sr))
-        self.set_buf(data.get("buf", self.buf))
-        self.set_gain(data.get("gain", self.gain))
-        self.set_port(data.get("port", self.port))
-        # self.set_in_dev(data.get("in_dev", self.in_dev))
-        # self.set_out_dev(data.get("out_dev", self.out_dev))
+        try: self.set_sr(data.get("sr", self.sr))
+        except Exception: pass
+
+        try: self.set_buf(data.get("buf", self.buf))
+        except Exception: pass
+
+        try: self.set_gain(data.get("gain", self.gain))
+        except Exception: pass
+
+        try: self.set_port(data.get("port", self.port))
+        except Exception: pass
+
+        # TODO load in_dev and out_dev once setters exist
 
         self.save()
         
