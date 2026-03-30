@@ -35,3 +35,4 @@ jobs:
         if: always()
         with:
           files: test-results.xml
+          report_individual_runs: "true"
