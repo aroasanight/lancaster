@@ -1,11 +1,11 @@
-# this code cannot run by itself - paste this as the main function 
-# in main.py and run it. this creates a loopback between input and
-# output devices/classes on the same host to test those directly
-# without any network involvment
+# this creates a loopback between input and output devices/classes 
+# on the same host to test those directly without any network involvment
 #
-# if you're actually coming here to use the code, I wish you luck
+# if you're actually coming here to use this code, I wish you luck
 # debugging whatever's gone wrong <3
-#   - Ari
+#   - past Ari
+
+from main import Config, AudioInput, AudioOutput
 
 if __name__ == "__main__":
     import time
