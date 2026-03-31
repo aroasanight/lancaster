@@ -5,6 +5,7 @@ import struct
 import threading
 import queue
 import numpy as np
+import time
 
 
 BLOCKSIZE = 1024
@@ -532,3 +533,30 @@ class SettingsSync:
                     self.remote_input_devices = data["devices"]
                 elif data["kind"] == "output":
                     self.remote_output_devices = data["devices"]
+
+
+
+class DeviceMonitor:
+    def __init__(self, sync, mode: str):
+        if mode not in ["input", "output"]:
+            raise ValueError(f"Invalid mode: {mode} — must be 'input' or 'output'")
+        self.sync = sync
+        self.mode = mode
+        self.running = False
+        self.last_devices = []
+
+    def start(self):
+        self.running = True
+        self.last_devices = list_input_devices() if self.mode == "input" else list_output_devices()
+        threading.Thread(target=self.poll_loop, daemon=True).start()
+
+    def stop(self):
+        self.running = False
+
+    def poll_loop(self):
+        while self.running:
+            time.sleep(1.5)
+            current = list_input_devices() if self.mode == "input" else list_output_devices()
+            if current != self.last_devices:
+                self.last_devices = current
+                self.sync.send_device_list(self.mode)
