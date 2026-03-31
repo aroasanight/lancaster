@@ -389,7 +389,7 @@ class Connection:
         self.running = True
 
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server.setsockopt(socket.SOLsockET, socket.SO_REUSEADDR, 1)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         nic_ip = self.config.nic_ip if hasattr(self.config, "nic_ip") else "0.0.0.0"
         bind_ip = nic_ip if nic_ip and nic_ip != "0.0.0.0" else ""
