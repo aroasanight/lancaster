@@ -418,8 +418,9 @@ class Connection:
 
         threading.Thread(target=self.reader, daemon=True).start()
 
-    def listen(self, on_message):
+    def listen(self, on_message, on_connect=None):
         self.on_message = on_message
+        self.on_connect = on_connect
         self.running = True
 
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -440,6 +441,8 @@ class Connection:
                 conn, addr = self.server.accept()
                 conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 self.sock = conn
+                if self.on_connect:
+                    self.on_connect()   # runs once connection is established
                 print(f"[Connection] Transmitter connected from {addr[0]}")
                 self.reader()
                 self.sock = None
@@ -598,5 +601,60 @@ class TransmitStream:
         
         if self.audio_in is not None: self.stop_stream()
 
+        self.monitor.stop()
+        self.connection.disconnect()
+
+
+
+class ReceiveStream:
+    def __init__(self, config, connection, sync, monitor, buffer):
+        self.config = config
+        self.connection = connection
+        self.sync = sync
+        self.monitor = monitor
+        self.buffer = buffer
+
+        self.audio_out = None
+        self.running = False
+
+    def on_message(self, msg_type, payload):
+        if msg_type == MSG_AUDIO:
+            frames = np.frombuffer(payload, dtype=np.float32).copy()
+            frames = frames.reshape(-1, self.config.ch)
+            self.buffer.push(frames)
+        elif msg_type == MSG_CONTROL:
+            self.sync.handle_message(msg_type, payload)
+
+    def listen(self):
+        self.monitor.start()
+        self.connection.listen(
+            on_message=self.on_message,
+            on_connect=self.on_connected
+        )
+
+    def on_connected(self):
+        self.sync.send_all_settings()
+        self.sync.send_device_list("output")
+
+    def start_stream(self):
+        self.running   = True
+        self.audio_out = AudioOutput(self.config)
+
+        def on_playback(outdata, frames, time, status):
+            block = self.buffer.pop()
+            outdata[:] = block[:frames]
+
+        self.audio_out.start(on_playback)
+
+    def stop_stream(self):
+        if self.audio_out is not None:
+            self.audio_out.stop()
+            self.audio_out = None
+        self.buffer.reset()
+        self.running = False
+
+    def disconnect(self):
+        if self.audio_out is not None:
+            self.stop_stream()
         self.monitor.stop()
         self.connection.disconnect()
