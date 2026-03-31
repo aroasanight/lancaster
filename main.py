@@ -2,15 +2,18 @@ import json
 import socket
 import sounddevice
 import struct
+import threading
+import queue
+import numpy as np
 
 
+BLOCKSIZE = 1024
 
 # message type defenitions
 MSG_AUDIO = 0x01
 MSG_CONTROL = 0x02
 
-
-# network transmission functions
+# framing functions
 def send_frame(sock, msg_type: int, payload: bytes):
     header = struct.pack(">BI", msg_type, len(payload))
     sock.sendall(header + payload)
@@ -223,7 +226,7 @@ class AudioInput:
             samplerate=self.config.sr,
             channels=self.config.ch,
             dtype="float32",
-            blocksize=1024,
+            blocksize=BLOCKSIZE,
             callback=callback,
         )
 
@@ -251,7 +254,7 @@ class AudioOutput:
             samplerate=self.config.sr,
             channels=self.config.ch,
             dtype="float32",
-            blocksize=1024,
+            blocksize=BLOCKSIZE,
             callback=callback,
         )
 
@@ -267,6 +270,45 @@ class AudioOutput:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+
+
+
+class PlaybackBuffer:
+    def __init__(self, config):
+        self.config  = config
+        self.queue = queue.Queue()
+        self.lock = threading.Lock()
+        self.pfilled = False
+
+    def push(self, frames):
+        self.queue.put(frames)
+
+    def pop(self):
+        silence = np.zeros((BLOCKSIZE, self.config.ch), dtype="float32")
+        
+        with self.lock:
+            if not self.pfilled:
+                queued_ms = (self.queue.qsize() * BLOCKSIZE / self.config.sr) * 1000
+                if queued_ms < self.config.buf:
+                    return silence
+                self.pfilled = True
+
+        try:
+            frames = self.queue.get_nowait()
+            return (frames * self.config.gain).astype(np.float32)
+        except queue.Empty:
+            with self.lock:
+                self.pfilled = False
+            return silence
+
+    def update_buf(self):
+        with self.lock:
+            self.pfilled = False
+
+    def reset(self):
+        with self.lock:
+            self.queue = queue.Queue()
+            self.pfilled = False
 
 
 
