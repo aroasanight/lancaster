@@ -45,6 +45,8 @@ def port_in_use(port:int):
             return True
 
 
+
+# audio device shit
 def find_device_by_name(name:str, kind:str):
     for i, device in enumerate(sounddevice.query_devices()):
         if kind == "input" and device["max_input_channels"] == 0: continue
@@ -52,6 +54,20 @@ def find_device_by_name(name:str, kind:str):
         if name.lower() == device["name"].lower(): return i
 
     raise ValueError(f"No {kind} device found matching '{name}'")
+
+def list_input_devices() -> list:
+    return [
+        device["name"]
+        for device in sounddevice.query_devices()
+        if device["max_input_channels"] > 0
+    ]
+
+def list_output_devices() -> list:
+    return [
+        device["name"]
+        for device in sounddevice.query_devices()
+        if device["max_output_channels"] > 0
+    ]
 
 
 
@@ -463,3 +479,56 @@ class Connection:
         print("[Connection] Disconnected")
 
 
+class SettingsSync:
+    def __init__(self, config, connection):
+        self.config = config
+        self.connection = connection
+
+        self.remote_input_devices  = []
+        self.remote_output_devices = []
+
+    def send_setting(self, key:str, value):
+        data = {"type": "setting", "key": key, "value": value}
+        self.connection.send(MSG_CONTROL, json.dumps(data).encode())
+    
+    def send_device_list(self, kind:str):
+        if kind == "input": devices = list_input_devices()
+        elif kind == "output": devices = list_output_devices()
+        else: raise ValueError(f"Invalid device type passed to send_device_list: {kind} is neither \"input\" nor \"output\"")
+
+        data = {"type": "device_list", "kind": kind, "devices": devices}
+        self.connection.send(MSG_CONTROL, json.dumps(data).encode())
+
+    def send_all_settings(self):
+        self.send_setting("sr", self.config.sr)
+        self.send_setting("ch", self.config.ch)
+        self.send_setting("buf", self.config.buf)
+        self.send_setting("gain", self.config.gain)
+        # self.send_setting("in_dev", self.config.in_dev)
+        # self.send_setting("out_dev", self.config.out_dev)
+
+    def handle_message(self, msg_type, payload):
+        if msg_type == MSG_CONTROL: # we only care about control messages, audio goes to other palces
+            data = json.loads(payload.decode())
+
+            setters = {
+                "sr":      self.config.set_sr,
+                "ch":      self.config.set_ch,
+                "buf":     self.config.set_buf,
+                "gain":    self.config.set_gain,
+                "in_dev":  self.config.set_in_dev,
+                "out_dev": self.config.set_out_dev,
+            }
+
+            if data["type"] == "setting":
+                if data["key"] in setters:
+                    try:
+                        setters[data["key"]](data["value"])
+                    except Exception:
+                        pass
+
+            elif data["type"] == "device_list":
+                if data["kind"] == "input":
+                    self.remote_input_devices = data["devices"]
+                elif data["kind"] == "output":
+                    self.remote_output_devices = data["devices"]
