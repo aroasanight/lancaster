@@ -349,7 +349,25 @@ class PlaybackBuffer:
 
     def update_buf(self):
         with self.lock:
-            self.pfilled = False
+            target = self.config.buf
+            current = (self.queue.qsize() * BLOCKSIZE / self.config.sr) * 1000
+
+            if current > target:
+                # buffer decreasing, drop packets
+                ms_to_drop = current - target
+                frames_to_drop = int((ms_to_drop / 1000) * self.config.sr / BLOCKSIZE)
+                for _ in range(frames_to_drop):
+                    try: self.queue.get_nowait()
+                    except queue.Empty: break
+                self.pfilled = True
+
+            elif current < target:
+                # buffer increasing, add silence
+                ms_to_add = target - current
+                frames_to_add = int((ms_to_add / 1000) * self.config.sr / BLOCKSIZE)
+                silence = np.zeros((BLOCKSIZE, self.config.ch), dtype="float32")
+                for _ in range(frames_to_add): self.queue.put(silence)
+                self.pfilled = True
 
     def reset(self):
         with self.lock:

@@ -944,13 +944,60 @@ class TestPlaybackBuffer(unittest.TestCase):
         result = buf.pop()
         self.assertFalse(np.all(result == 0))
 
-    def test_update_buf_resets_prefill(self):
+
+
+    # update_buf
+
+    def test_update_buf_increase_keeps_playing(self):
         buf = PlaybackBuffer(self.config)
         self._prefill(buf)
-        buf.pop()   # confirm prefilled
+        self.config.set_buf(self.config.buf + 200)
         buf.update_buf()
-        result = buf.pop()
-        np.testing.assert_array_equal(result, np.zeros((BLOCKSIZE, self.config.ch), dtype="float32"))
+        self.assertTrue(buf.pfilled)
+
+    def test_update_buf_decrease_keeps_playing(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        self.config.set_buf(self.config.buf - 200)
+        buf.update_buf()
+        self.assertTrue(buf.pfilled)
+
+    def test_update_buf_increase_adds_silence_frames(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        size_before = buf.queue.qsize()
+        self.config.set_buf(self.config.buf + 200)
+        buf.update_buf()
+        self.assertGreater(buf.queue.qsize(), size_before)
+
+    def test_update_buf_decrease_drops_frames(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        # push some frames so there's something to drop
+        for _ in range(50):
+            buf.push(np.ones((BLOCKSIZE, self.config.ch), dtype="float32"))
+        size_before = buf.queue.qsize()
+        self.config.set_buf(self.config.buf - 200)
+        buf.update_buf()
+        self.assertLess(buf.queue.qsize(), size_before)
+
+    def test_update_buf_increase_preserves_existing_audio(self):
+        # audio already in queue should still be there after increasing buffer
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        frames = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.5
+        buf.push(frames)
+        size_before = buf.queue.qsize()
+        self.config.set_buf(self.config.buf + 200)
+        buf.update_buf()
+        # queue should be larger, not smaller
+        self.assertGreater(buf.queue.qsize(), size_before)
+
+    def test_update_buf_no_change_keeps_playing(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        buf.update_buf() # same buffer value, nothing should change
+        self.assertTrue(buf.pfilled)
 
 
 
