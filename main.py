@@ -200,9 +200,9 @@ class AudioInput:
             callback=callback,
         )
 
-        # if self.config.in_dev is not None: kwargs["device"] = find_device_by_name(self.config.in_dev, "input")
+        if self.config.in_dev is not None: kwargs["device"] = find_device_by_name(self.config.in_dev, "input")
         # for testing override the device 
-        kwargs["device"] = find_device_by_name("Coursework Loopback", "input")
+        # kwargs["device"] = find_device_by_name("Coursework Loopback", "input")
 
         self._stream = sounddevice.InputStream(**kwargs)
         self._stream.start()
@@ -228,9 +228,9 @@ class AudioOutput:
             callback=callback,
         )
 
-        # if self.config.out_dev is not None: kwargs["device"] = find_device_by_name(self.config.out_dev, "output")
+        if self.config.out_dev is not None: kwargs["device"] = find_device_by_name(self.config.out_dev, "output")
         # again for testing override the device 
-        kwargs["device"] = find_device_by_name("UMC404HD 192k", "output")
+        # kwargs["device"] = find_device_by_name("UMC404HD 192k", "output")
 
         self._stream = sounddevice.OutputStream(**kwargs)
         self._stream.start()
