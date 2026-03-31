@@ -1,6 +1,6 @@
 import unittest, os, json
 from unittest.mock import patch
-from main import *
+from main import Config
 
 # unit testing derived from https://www.geeksforgeeks.org/python/unit-testing-python-unittest/
 
