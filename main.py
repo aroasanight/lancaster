@@ -423,7 +423,6 @@ class Connection:
             try:
                 conn, addr = self.server.accept()
                 conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                conn.settimeout(1.0)
                 self.sock = conn
                 print(f"[Connection] Transmitter connected from {addr[0]}")
                 self.reader()
@@ -440,8 +439,6 @@ class Connection:
                 msg_type, payload = recv_frame(self.sock)
                 if self.on_message:
                     self.on_message(msg_type, payload)
-            except socket.timeout:
-                continue   # no data yet, loop back and check self.running
             except (ConnectionError, OSError):
                 break
 
