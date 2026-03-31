@@ -1,7 +1,34 @@
 import json
 import socket
 import sounddevice
+import struct
 
+
+
+# message type defenitions
+MSG_AUDIO = 0x01
+MSG_CONTROL = 0x02
+
+
+# network transmission functions
+def send_frame(sock, msg_type: int, payload: bytes):
+    header = struct.pack(">BI", msg_type, len(payload))
+    sock.sendall(header + payload)
+
+def recv_exactly(sock, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError("Connection closed before all bytes received")
+        buf += chunk
+    return buf
+
+def recv_frame(sock) -> tuple:
+    header = recv_exactly(sock, 5)
+    msg_type, length = struct.unpack(">BI", header)
+    payload = recv_exactly(sock, length) if length > 0 else b""
+    return msg_type, payload
 
 
 # check if port is free

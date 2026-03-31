@@ -816,5 +816,81 @@ class TestAudioInOutClasses(unittest.TestCase):
 
 
 
+class TestFramingFunctions(unittest.TestCase):
+    def test_audio_frame_roundtrip(self):
+        a, b = socket.socketpair()
+        try:
+            send_frame(a, MSG_AUDIO, b"according to all known laws of aviation")
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_AUDIO)
+            self.assertEqual(payload, b"according to all known laws of aviation")
+        finally:
+            a.close()
+            b.close()
+
+    def test_control_frame_roundtrip(self):
+        a, b = socket.socketpair()
+        try:
+            send_frame(a, MSG_CONTROL, b"according to all known laws of aviation")
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_CONTROL)
+            self.assertEqual(payload, b"according to all known laws of aviation")
+        finally:
+            a.close()
+            b.close()
+            
+    def test_empty_payload_roundtrip(self):
+        a, b = socket.socketpair()
+        try:
+            send_frame(a, MSG_AUDIO, b"")
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_AUDIO)
+            self.assertEqual(payload, b"")
+        finally:
+            a.close()
+            b.close()
+            
+    def test_massive_payload_roundtrip(self):
+        a, b = socket.socketpair()
+        try:
+            send_frame(a, MSG_AUDIO, b"x"*4096)
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_AUDIO)
+            self.assertEqual(payload, b"x"*4096)
+        finally:
+            a.close()
+            b.close()
+
+    def test_frame_order_consistency(self):
+        a, b = socket.socketpair()
+        try:
+            send_frame(a, MSG_AUDIO, b"according to all known laws of aviation")
+            send_frame(a, MSG_CONTROL, b"there is no way that the bee should be able to fly")
+            send_frame(a, MSG_CONTROL, b"the bee of course flies anyway")
+            send_frame(a, MSG_AUDIO, b"because bees don't care what humans think is impossible")
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_AUDIO)
+            self.assertEqual(payload, b"according to all known laws of aviation")
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_CONTROL)
+            self.assertEqual(payload, b"there is no way that the bee should be able to fly")
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_CONTROL)
+            self.assertEqual(payload, b"the bee of course flies anyway")
+            msg_type, payload = recv_frame(b)
+            self.assertEqual(msg_type, MSG_AUDIO)
+            self.assertEqual(payload, b"because bees don't care what humans think is impossible")
+        finally:
+            a.close()
+            b.close()
+            
+    def test_recv_exactly_connection_error(self):
+        a, b = socket.socketpair()
+        a.close()
+        with self.assertRaises(ConnectionError):
+            msg_type, payload = recv_frame(b)
+        b.close()
+
+
 if __name__ == "__main__":
     unittest.main()
