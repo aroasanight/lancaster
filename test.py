@@ -1338,30 +1338,30 @@ class TestSettingsSync(unittest.TestCase):
 
     # send_device_list
 
-    @patch("main.list_input_devices", return_value=["Mic A", "Mic B"])
+    @patch("main.list_input_devices", return_value=["MacBook Pro Microphone", "UMC404HD 192k"])
     def test_send_device_list_input_sends_msg_control(self, _):
         self.sync.send_device_list("input")
         self.assertEqual(self.sync.connection.sent[0][0], MSG_CONTROL)
 
-    @patch("main.list_input_devices", return_value=["Mic A", "Mic B"])
+    @patch("main.list_input_devices", return_value=["MacBook Pro Microphone", "UMC404HD 192k"])
     def test_send_device_list_input_contains_devices(self, _):
         self.sync.send_device_list("input")
         data = json.loads(self.sync.connection.sent[0][1].decode())
-        self.assertEqual(data["devices"], ["Mic A", "Mic B"])
+        self.assertEqual(data["devices"], ["MacBook Pro Microphone", "UMC404HD 192k"])
 
-    @patch("main.list_input_devices", return_value=["Mic A", "Mic B"])
+    @patch("main.list_input_devices", return_value=["MacBook Pro Microphone", "UMC404HD 192k"])
     def test_send_device_list_input_kind_correct(self, _):
         self.sync.send_device_list("input")
         data = json.loads(self.sync.connection.sent[0][1].decode())
         self.assertEqual(data["kind"], "input")
 
-    @patch("main.list_output_devices", return_value=["Speakers", "Headphones"])
+    @patch("main.list_output_devices", return_value=["MacBook Pro Speakers", "Headphones"])
     def test_send_device_list_output_contains_devices(self, _):
         self.sync.send_device_list("output")
         data = json.loads(self.sync.connection.sent[0][1].decode())
-        self.assertEqual(data["devices"], ["Speakers", "Headphones"])
+        self.assertEqual(data["devices"], ["MacBook Pro Speakers", "Headphones"])
 
-    @patch("main.list_output_devices", return_value=["Speakers", "Headphones"])
+    @patch("main.list_output_devices", return_value=["MacBook Pro Speakers", "Headphones"])
     def test_send_device_list_output_kind_correct(self, _):
         self.sync.send_device_list("output")
         data = json.loads(self.sync.connection.sent[0][1].decode())
@@ -1435,17 +1435,17 @@ class TestSettingsSync(unittest.TestCase):
         self.assertEqual(self.config.gain, 2.0)
 
     def test_handle_message_applies_in_dev(self):
-        msg = json.dumps({"type": "setting", "key": "in_dev", "value": "MacBook Mic"}).encode()
+        msg = json.dumps({"type": "setting", "key": "in_dev", "value": "MacBook Pro Microphone"}).encode()
         self.sync.handle_message(MSG_CONTROL, msg)
-        self.assertEqual(self.config.in_dev, "MacBook Mic")
+        self.assertEqual(self.config.in_dev, "MacBook Pro Microphone")
 
     def test_handle_message_applies_out_dev(self):
-        msg = json.dumps({"type": "setting", "key": "out_dev", "value": "MacBook Speakers"}).encode()
+        msg = json.dumps({"type": "setting", "key": "out_dev", "value": "MacBook Pro Speakers"}).encode()
         self.sync.handle_message(MSG_CONTROL, msg)
-        self.assertEqual(self.config.out_dev, "MacBook Speakers")
+        self.assertEqual(self.config.out_dev, "MacBook Pro Speakers")
 
     def test_handle_message_invalid_key_does_not_crash(self):
-        msg = json.dumps({"type": "setting", "key": "banana", "value": 999}).encode()
+        msg = json.dumps({"type": "setting", "key": "according to all known laws", "value": 999}).encode()
         self.sync.handle_message(MSG_CONTROL, msg)   # should do nothing
 
     def test_handle_message_invalid_value_does_not_crash(self):
@@ -1458,21 +1458,21 @@ class TestSettingsSync(unittest.TestCase):
     # handle_message — device lists
 
     def test_handle_message_stores_input_device_list(self):
-        msg = json.dumps({"type": "device_list", "kind": "input", "devices": ["Mic A", "Mic B"]}).encode()
+        msg = json.dumps({"type": "device_list", "kind": "input", "devices": ["MacBook Pro Microphone", "UMC404HD 192k"]}).encode()
         self.sync.handle_message(MSG_CONTROL, msg)
-        self.assertEqual(self.sync.remote_input_devices, ["Mic A", "Mic B"])
+        self.assertEqual(self.sync.remote_input_devices, ["MacBook Pro Microphone", "UMC404HD 192k"])
 
     def test_handle_message_stores_output_device_list(self):
-        msg = json.dumps({"type": "device_list", "kind": "output", "devices": ["Speakers", "Headphones"]}).encode()
+        msg = json.dumps({"type": "device_list", "kind": "output", "devices": ["MacBook Pro Speakers", "External Headphones"]}).encode()
         self.sync.handle_message(MSG_CONTROL, msg)
-        self.assertEqual(self.sync.remote_output_devices, ["Speakers", "Headphones"])
+        self.assertEqual(self.sync.remote_output_devices, ["MacBook Pro Speakers", "External Headphones"])
 
     def test_handle_message_updates_device_list_on_change(self):
-        msg1 = json.dumps({"type": "device_list", "kind": "output", "devices": ["Speakers"]}).encode()
-        msg2 = json.dumps({"type": "device_list", "kind": "output", "devices": ["Speakers", "Headphones"]}).encode()
+        msg1 = json.dumps({"type": "device_list", "kind": "output", "devices": ["MacBook Pro Speakers"]}).encode()
+        msg2 = json.dumps({"type": "device_list", "kind": "output", "devices": ["MacBook Pro Speakers", "External Headphones"]}).encode()
         self.sync.handle_message(MSG_CONTROL, msg1)
         self.sync.handle_message(MSG_CONTROL, msg2)
-        self.assertEqual(self.sync.remote_output_devices, ["Speakers", "Headphones"])
+        self.assertEqual(self.sync.remote_output_devices, ["MacBook Pro Speakers", "External Headphones"])
 
     def test_remote_input_devices_starts_empty(self):
         self.assertEqual(self.sync.remote_input_devices, [])
@@ -1482,6 +1482,145 @@ class TestSettingsSync(unittest.TestCase):
 
 
 
+class TestDeviceMonitor(unittest.TestCase):
+
+    class FakeSync:
+        def __init__(self):
+            self.sent_device_lists = []
+        def send_device_list(self, kind):
+            self.sent_device_lists.append(kind)
+
+    def setUp(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+        self.config = Config(path="test_config.json")
+        self.sync = self.FakeSync()
+
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+
+
+
+    # init
+
+    def test_invalid_mode_raises(self):
+        with self.assertRaises(ValueError):
+            DeviceMonitor(self.sync, "according to all known laws of aviation, there is no way the tthe bee should be able to fly")
+
+    def test_valid_input_mode(self):
+        monitor = DeviceMonitor(self.sync, "input")
+        self.assertEqual(monitor.mode, "input")
+
+    def test_valid_output_mode(self):
+        monitor = DeviceMonitor(self.sync, "output")
+        self.assertEqual(monitor.mode, "output")
+
+    def test_starts_not_running(self):
+        monitor = DeviceMonitor(self.sync, "input")
+        self.assertFalse(monitor.running)
+
+    def test_remote_device_list_starts_empty(self):
+        monitor = DeviceMonitor(self.sync, "input")
+        self.assertEqual(monitor.last_devices, [])
+
+
+
+    # start / stop
+
+    @patch("main.list_input_devices", return_value=["MacBook Pro Microphone"])
+    def test_start_sets_running(self, _):
+        monitor = DeviceMonitor(self.sync, "input")
+        monitor.start()
+        self.assertTrue(monitor.running)
+        monitor.stop()
+
+    @patch("main.list_input_devices", return_value=["MacBook Pro Microphone"])
+    def test_start_populates_last_devices(self, _):
+        monitor = DeviceMonitor(self.sync, "input")
+        monitor.start()
+        self.assertEqual(monitor.last_devices, ["MacBook Pro Microphone"])
+        monitor.stop()
+
+    @patch("main.list_output_devices", return_value=["MacBook Pro Speakers"])
+    def test_start_populates_last_devices_output(self, _):
+        monitor = DeviceMonitor(self.sync, "output")
+        monitor.start()
+        self.assertEqual(monitor.last_devices, ["MacBook Pro Speakers"])
+        monitor.stop()
+
+    @patch("main.list_input_devices", return_value=["MacBook Pro Microphone"])
+    def test_stop_sets_running_false(self, _):
+        monitor = DeviceMonitor(self.sync, "input")
+        monitor.start()
+        monitor.stop()
+        self.assertFalse(monitor.running)
+
+
+
+    # poll loop — device change detection
+
+    @patch("main.list_input_devices", side_effect=[["MacBook Pro Microphone"], ["MacBook Pro Microphone", "UMC404HD 192k"]])
+    def test_poll_loop_detects_input_device_added(self, _):
+        monitor = DeviceMonitor(self.sync, "input")
+        monitor.last_devices = ["MacBook Pro Microphone"]
+        monitor.running = True
+        # call poll_loop directly with a short sleep patch so it only runs once
+        with patch("time.sleep", return_value=None):
+            # run one iteration manually, not in thread
+            current = list_input_devices()
+            if current != monitor.last_devices:
+                monitor.last_devices = current
+                monitor.sync.send_device_list(monitor.mode)
+        self.assertIn("input", self.sync.sent_device_lists)
+
+    @patch("main.list_input_devices", side_effect=[["MacBook Pro Microphone", "UMC404HD 192k"], ["MacBook Pro Microphone"]])
+    def test_poll_loop_detects_input_device_removed(self, _):
+        monitor = DeviceMonitor(self.sync, "input")
+        monitor.last_devices = ["MacBook Pro Microphone", "UMC404HD 192k"]
+        monitor.running = True
+        with patch("time.sleep", return_value=None):
+            current = list_input_devices()
+            if current != monitor.last_devices:
+                monitor.last_devices = current
+                monitor.sync.send_device_list(monitor.mode)
+        self.assertIn("input", self.sync.sent_device_lists)
+
+    @patch("main.list_output_devices", side_effect=[["MacBook Pro Speakers"], ["MacBook Pro Speakers", "External Headphones"]])
+    def test_poll_loop_detects_output_device_added(self, _):
+        monitor = DeviceMonitor(self.sync, "output")
+        monitor.last_devices = ["MacBook Pro Speakers"]
+        monitor.running = True
+        with patch("time.sleep", return_value=None):
+            current = list_output_devices()
+            if current != monitor.last_devices:
+                monitor.last_devices = current
+                monitor.sync.send_device_list(monitor.mode)
+        self.assertIn("output", self.sync.sent_device_lists)
+
+    @patch("main.list_input_devices", return_value=["MacBook Pro Microphone"])
+    def test_poll_loop_does_not_send_when_no_change(self, _):
+        monitor = DeviceMonitor(self.sync, "input")
+        monitor.last_devices = ["MacBook Pro Microphone"]
+        monitor.running = True
+        with patch("time.sleep", return_value=None):
+            current = list_input_devices()
+            if current != monitor.last_devices:
+                monitor.last_devices = current
+                monitor.sync.send_device_list(monitor.mode)
+        self.assertEqual(self.sync.sent_device_lists, [])
+
+    @patch("main.list_input_devices", side_effect=[["MacBook Pro Microphone"], ["MacBook Pro Microphone", "UMC404HD 192k"]])
+    def test_poll_loop_updates_last_devices_on_change(self, _):
+        monitor = DeviceMonitor(self.sync, "input")
+        monitor.last_devices = ["MacBook Pro Microphone"]
+        monitor.running = True
+        with patch("time.sleep", return_value=None):
+            current = list_input_devices()
+            if current != monitor.last_devices:
+                monitor.last_devices = current
+                monitor.sync.send_device_list(monitor.mode)
+        self.assertEqual(monitor.last_devices, ["MacBook Pro Microphone", "UMC404HD 192k"])
 
 
 if __name__ == "__main__":
