@@ -15,7 +15,7 @@ from main import Config, Connection, SettingsSync, DeviceMonitor, PlaybackBuffer
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 2 or sys.argv[1] not in ["transmitter", "reciever"]: sys.exit(1)
+    if len(sys.argv) < 2 or sys.argv[1] not in ["transmitter", "receiver"]: sys.exit(1)
 
     mode = sys.argv[1]
     config = Config(path="config.json", mode=mode)
