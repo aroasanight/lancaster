@@ -1270,7 +1270,7 @@ class TestConnectionClass(unittest.TestCase):
                 break
             time.sleep(0.05)
 
-        self.assertTrue(receiver._running)
+        self.assertTrue(receiver.running)
         self.assertIsNone(receiver.sock)
         receiver.disconnect()
 
