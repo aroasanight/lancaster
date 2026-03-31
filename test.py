@@ -1289,5 +1289,200 @@ class TestConnectionClass(unittest.TestCase):
 
 
 
+class TestSettingsSync(unittest.TestCase):
+
+    class FakeConnection:
+        def __init__(self):
+            self.sent = []
+        def send(self, msg_type, payload):
+            self.sent.append((msg_type, payload))
+
+    def setUp(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+        self.config = Config(path="test_config.json")
+        self.sync = SettingsSync(self.config, self.FakeConnection())
+
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+
+
+    # send_setting
+
+    def test_send_setting_sends_msg_control(self):
+        self.sync.send_setting("sr", 48000)
+        self.assertEqual(self.sync.connection.sent[0][0], MSG_CONTROL)
+
+    def test_send_setting_deserialises_correctly(self):
+        self.sync.send_setting("buf", 500)
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data, {"type": "setting", "key": "buf", "value": 500})
+
+    def test_send_setting_key_correct(self):
+        self.sync.send_setting("gain", 2.0)
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data["key"], "gain")
+
+    def test_send_setting_value_correct(self):
+        self.sync.send_setting("gain", 2.0)
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data["value"], 2.0)
+
+    def test_send_setting_type_field_correct(self):
+        self.sync.send_setting("sr", 44100)
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data["type"], "setting")
+
+
+
+    # send_device_list
+
+    @patch("main.list_input_devices", return_value=["Mic A", "Mic B"])
+    def test_send_device_list_input_sends_msg_control(self, _):
+        self.sync.send_device_list("input")
+        self.assertEqual(self.sync.connection.sent[0][0], MSG_CONTROL)
+
+    @patch("main.list_input_devices", return_value=["Mic A", "Mic B"])
+    def test_send_device_list_input_contains_devices(self, _):
+        self.sync.send_device_list("input")
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data["devices"], ["Mic A", "Mic B"])
+
+    @patch("main.list_input_devices", return_value=["Mic A", "Mic B"])
+    def test_send_device_list_input_kind_correct(self, _):
+        self.sync.send_device_list("input")
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data["kind"], "input")
+
+    @patch("main.list_output_devices", return_value=["Speakers", "Headphones"])
+    def test_send_device_list_output_contains_devices(self, _):
+        self.sync.send_device_list("output")
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data["devices"], ["Speakers", "Headphones"])
+
+    @patch("main.list_output_devices", return_value=["Speakers", "Headphones"])
+    def test_send_device_list_output_kind_correct(self, _):
+        self.sync.send_device_list("output")
+        data = json.loads(self.sync.connection.sent[0][1].decode())
+        self.assertEqual(data["kind"], "output")
+
+    def test_send_device_list_invalid_kind_raises(self):
+        with self.assertRaises(ValueError):
+            self.sync.send_device_list("banana")
+
+
+
+    # send_all_settings
+
+    def test_send_all_settings_sends_sr(self):
+        self.sync.send_all_settings()
+        keys = [json.loads(p.decode())["key"] for _, p in self.sync.connection.sent]
+        self.assertIn("sr", keys)
+
+    def test_send_all_settings_sends_ch(self):
+        self.sync.send_all_settings()
+        keys = [json.loads(p.decode())["key"] for _, p in self.sync.connection.sent]
+        self.assertIn("ch", keys)
+
+    def test_send_all_settings_sends_buf(self):
+        self.sync.send_all_settings()
+        keys = [json.loads(p.decode())["key"] for _, p in self.sync.connection.sent]
+        self.assertIn("buf", keys)
+
+    def test_send_all_settings_sends_gain(self):
+        self.sync.send_all_settings()
+        keys = [json.loads(p.decode())["key"] for _, p in self.sync.connection.sent]
+        self.assertIn("gain", keys)
+
+    def test_send_all_settings_does_not_send_in_dev(self):
+        self.sync.send_all_settings()
+        keys = [json.loads(p.decode())["key"] for _, p in self.sync.connection.sent]
+        self.assertNotIn("in_dev", keys)
+
+    def test_send_all_settings_does_not_send_out_dev(self):
+        self.sync.send_all_settings()
+        keys = [json.loads(p.decode())["key"] for _, p in self.sync.connection.sent]
+        self.assertNotIn("out_dev", keys)
+
+
+
+    # handle_message — settings
+
+    def test_handle_message_ignores_audio(self):
+        self.sync.handle_message(MSG_AUDIO, b"some audio data")
+        # config should be unchanged — no exception, no side effects
+        self.assertEqual(self.config.sr, 48000)
+
+    def test_handle_message_applies_sr(self):
+        msg = json.dumps({"type": "setting", "key": "sr", "value": 44100}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.config.sr, 44100)
+
+    def test_handle_message_applies_ch(self):
+        msg = json.dumps({"type": "setting", "key": "ch", "value": 1}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.config.ch, 1)
+
+    def test_handle_message_applies_buf(self):
+        msg = json.dumps({"type": "setting", "key": "buf", "value": 300}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.config.buf, 300)
+
+    def test_handle_message_applies_gain(self):
+        msg = json.dumps({"type": "setting", "key": "gain", "value": 2.0}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.config.gain, 2.0)
+
+    def test_handle_message_applies_in_dev(self):
+        msg = json.dumps({"type": "setting", "key": "in_dev", "value": "MacBook Mic"}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.config.in_dev, "MacBook Mic")
+
+    def test_handle_message_applies_out_dev(self):
+        msg = json.dumps({"type": "setting", "key": "out_dev", "value": "MacBook Speakers"}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.config.out_dev, "MacBook Speakers")
+
+    def test_handle_message_invalid_key_does_not_crash(self):
+        msg = json.dumps({"type": "setting", "key": "banana", "value": 999}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)   # should do nothing
+
+    def test_handle_message_invalid_value_does_not_crash(self):
+        msg = json.dumps({"type": "setting", "key": "sr", "value": 99999}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.config.sr, 48000)   # unchanged
+
+
+
+    # handle_message — device lists
+
+    def test_handle_message_stores_input_device_list(self):
+        msg = json.dumps({"type": "device_list", "kind": "input", "devices": ["Mic A", "Mic B"]}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.sync.remote_input_devices, ["Mic A", "Mic B"])
+
+    def test_handle_message_stores_output_device_list(self):
+        msg = json.dumps({"type": "device_list", "kind": "output", "devices": ["Speakers", "Headphones"]}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg)
+        self.assertEqual(self.sync.remote_output_devices, ["Speakers", "Headphones"])
+
+    def test_handle_message_updates_device_list_on_change(self):
+        msg1 = json.dumps({"type": "device_list", "kind": "output", "devices": ["Speakers"]}).encode()
+        msg2 = json.dumps({"type": "device_list", "kind": "output", "devices": ["Speakers", "Headphones"]}).encode()
+        self.sync.handle_message(MSG_CONTROL, msg1)
+        self.sync.handle_message(MSG_CONTROL, msg2)
+        self.assertEqual(self.sync.remote_output_devices, ["Speakers", "Headphones"])
+
+    def test_remote_input_devices_starts_empty(self):
+        self.assertEqual(self.sync.remote_input_devices, [])
+
+    def test_remote_output_devices_starts_empty(self):
+        self.assertEqual(self.sync.remote_output_devices, [])
+
+
+
+
+
 if __name__ == "__main__":
     unittest.main()
