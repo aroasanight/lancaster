@@ -560,3 +560,43 @@ class DeviceMonitor:
             if current != self.last_devices:
                 self.last_devices = current
                 self.sync.send_device_list(self.mode)
+
+
+
+class TransmitStream:
+    def __init__(self, config, connection, sync, monitor):
+        self.config = config
+        self.connection = connection
+        self.sync = sync
+        self.monitor = monitor
+
+        self.audio_in = None
+        self.running = False
+
+    def connect(self, host):
+        self.connection.connect(host, self.sync.handle_message)
+        self.sync.send_all_settings()
+        self.sync.send_device_list("input")
+        self.monitor.start()
+    
+    def start_stream(self):
+        self.running = True
+        self.audio_in = AudioInput(self.config)
+        self.audio_in.start(self.on_audio)
+
+    def on_audio(self, indata, frames, time, status):
+        if self.running:
+            self.connection.send(MSG_AUDIO, indata.tobytes())
+
+    def stop_stream(self):
+        if self.audio_in is not None:
+            self.audio_in.stop()
+            self.audio_in = None
+        self.running = False
+
+    def disconnect(self):
+        
+        if self.audio_in is not None: self.stop_stream()
+
+        self.monitor.stop()
+        self.connection.disconnect()
