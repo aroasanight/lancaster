@@ -892,5 +892,154 @@ class TestFramingFunctions(unittest.TestCase):
         b.close()
 
 
+
+class TestPlaybackBuffer(unittest.TestCase):
+
+    def setUp(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+        self.config = Config(path="test_config.json")
+
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+
+    def _prefill(self, buf):
+        frames_needed = int((self.config.buf / 1000) * self.config.sr / BLOCKSIZE) + 1
+        for _ in range(frames_needed):
+            buf.push(np.ones((BLOCKSIZE, self.config.ch), dtype="float32"))
+        # trigger the prefill flag by calling pop once
+        buf.pop()
+        # drain remaining frames
+        while True:
+            try:
+                buf.queue.get_nowait()
+            except queue.Empty:
+                break
+
+
+
+    # pre-fill behaviour
+
+    def test_pop_returns_silence_before_prefill(self):
+        buf = PlaybackBuffer(self.config)
+        result = buf.pop()
+        np.testing.assert_array_equal(result, np.zeros((BLOCKSIZE, self.config.ch), dtype="float32"))
+
+    def test_pop_returns_silence_shape_matches_channels(self):
+        buf = PlaybackBuffer(self.config)
+        result = buf.pop()
+        self.assertEqual(result.shape, (BLOCKSIZE, self.config.ch))
+
+    def test_pop_silence_shape_updates_with_channel_count(self):
+        self.config.set_ch(1)
+        buf = PlaybackBuffer(self.config)
+        result = buf.pop()
+        self.assertEqual(result.shape, (BLOCKSIZE, 1))
+
+    def test_pop_stops_returning_silence_after_prefill(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        buf.push(np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.5)
+        result = buf.pop()
+        self.assertFalse(np.all(result == 0))
+
+    def test_update_buf_resets_prefill(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        buf.pop()   # confirm prefilled
+        buf.update_buf()
+        result = buf.pop()
+        np.testing.assert_array_equal(result, np.zeros((BLOCKSIZE, self.config.ch), dtype="float32"))
+
+
+
+    # push and pop
+
+    def test_pushed_frames_come_back_out(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        frames = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.5
+        buf.push(frames)
+        result = buf.pop()
+        np.testing.assert_array_almost_equal(result, frames)
+
+    def test_gain_applied_on_pop(self):
+        self.config.set_gain(2.0)
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        frames = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.5
+        buf.push(frames)
+        result = buf.pop()
+        expected = frames * 2.0
+        np.testing.assert_array_almost_equal(result, expected)
+
+    def test_gain_change_reflected_without_restart(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        frames = np.ones((BLOCKSIZE, self.config.ch), dtype="float32")
+        buf.push(frames)
+        self.config.set_gain(3.0)
+        result = buf.pop()
+        np.testing.assert_array_almost_equal(result, frames * 3.0)
+
+    def test_pop_returns_silence_when_queue_runs_dry(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        while True:
+            try:
+                buf.queue.get_nowait()
+            except queue.Empty:
+                break
+        result = buf.pop()
+        np.testing.assert_array_equal(result, np.zeros((BLOCKSIZE, self.config.ch), dtype="float32"))
+
+    def test_pop_resets_prefill_when_queue_runs_dry(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        while True:
+            try:
+                buf.queue.get_nowait()
+            except queue.Empty:
+                break
+        buf.pop()   # triggers dry buffer, resets pfilled
+        self.assertFalse(buf.pfilled)
+
+    def test_frames_come_out_in_order(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        a = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.1
+        b = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.2
+        c = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.3
+        buf.push(a)
+        buf.push(b)
+        buf.push(c)
+        np.testing.assert_array_almost_equal(buf.pop(), a)
+        np.testing.assert_array_almost_equal(buf.pop(), b)
+        np.testing.assert_array_almost_equal(buf.pop(), c)
+
+
+
+    # reset
+
+    def test_reset_clears_queue(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        buf.reset()
+        self.assertEqual(buf.queue.qsize(), 0)
+
+    def test_reset_resets_prefill(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        buf.reset()
+        self.assertFalse(buf.pfilled)
+
+    def test_pop_returns_silence_after_reset(self):
+        buf = PlaybackBuffer(self.config)
+        self._prefill(buf)
+        buf.reset()
+        result = buf.pop()
+        np.testing.assert_array_equal(result, np.zeros((BLOCKSIZE, self.config.ch), dtype="float32"))
+
 if __name__ == "__main__":
     unittest.main()
