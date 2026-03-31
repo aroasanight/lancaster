@@ -1262,10 +1262,16 @@ class TestConnectionClass(unittest.TestCase):
         transmitter.connect("127.0.0.1", lambda t, p: None)
         time.sleep(0.2)
         transmitter.disconnect()
-        time.sleep(5.0)   # give receiver time to notice disconnect
-        # receiver should still be running, waiting for a new connection
-        self.assertTrue(receiver.running)
-        self.assertIsNone(receiver.sock)
+
+        # poll until sock is None or timeout after 5 seconds
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if receiver._sock is None:
+                break
+            time.sleep(0.05)
+
+        self.assertTrue(receiver._running)
+        self.assertIsNone(receiver._sock)
         receiver.disconnect()
 
     # ── config values used correctly ──────────────────────────────────────────
