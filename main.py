@@ -109,6 +109,14 @@ class Config:
             try: self.set_port(port)
             except Exception: pass
         
+        if in_dev is not None:
+            try: self.set_in_dev(in_dev)
+            except Exception: pass
+
+        if out_dev is not None:
+            try: self.set_out_dev(out_dev)
+            except Exception: pass
+        
         if nic_ip is not None:
             try: self.set_nic_ip(nic_ip)
             except Exception: pass
