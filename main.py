@@ -194,7 +194,7 @@ class AudioInput:
     def start(self, callback):
         kwargs = dict(
             samplerate=self.config.sr,
-            channels=2,
+            channels=self.config.ch,
             dtype="float32",
             blocksize=1024,
             callback=callback,
@@ -222,7 +222,7 @@ class AudioOutput:
     def start(self, callback):
         kwargs = dict(
             samplerate=self.config.sr,
-            channels=2,
+            channels=self.config.ch,
             dtype="float32",
             blocksize=1024,
             callback=callback,

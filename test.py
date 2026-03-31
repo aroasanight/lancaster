@@ -549,10 +549,11 @@ class TestAudioInOutClasses(unittest.TestCase):
     @patch("main.sounddevice.InputStream")
     def test_audio_input_uses_config_channels(self, mock_stream_class):
         mock_stream_class.return_value = MagicMock()
-        ai = AudioInput(self.config)
+        self.config.set_ch(17) # something other than default of 2 since if it's hardcoded for some reason it's likely to be 2
+        ai = AudioInput(self.config)                  # if anyone uses 17 channels for something they're a fucking psychopath
         ai.start(lambda indata, f, t, s: None)
         kwargs = mock_stream_class.call_args.kwargs
-        self.assertEqual(kwargs["channels"], self.config.ch)
+        self.assertEqual(kwargs["channels"], 17)
 
     @patch("main.sounddevice.InputStream")
     def test_audio_input_uses_float32(self, mock_stream_class):
@@ -699,10 +700,11 @@ class TestAudioInOutClasses(unittest.TestCase):
     @patch("main.sounddevice.OutputStream")
     def test_audio_output_uses_config_channels(self, mock_stream_class):
         mock_stream_class.return_value = MagicMock()
+        self.config.set_ch(17) # again something other than default of 2, check notes from above section
         ao = AudioOutput(self.config)
         ao.start(lambda outdata, f, t, s: outdata.__setitem__(slice(None), 0))
         kwargs = mock_stream_class.call_args.kwargs
-        self.assertEqual(kwargs["channels"], self.config.ch)
+        self.assertEqual(kwargs["channels"], 17)
 
     @patch("main.sounddevice.OutputStream")
     def test_audio_output_uses_float32(self, mock_stream_class):
