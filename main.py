@@ -464,31 +464,3 @@ class Connection:
         print("[Connection] Disconnected")
 
 
-
-# LOOPBACK TEST
-
-# if __name__ == "__main__":
-#     import time
-#     import queue
-    
-#     config = Config(path="config.json")
-#     q = queue.Queue()
-
-#     audio_in  = AudioInput(config)
-#     audio_out = AudioOutput(config)
-
-#     def on_input(indata, frames, time, status):
-#         q.put(indata.copy())
-
-#     def on_output(outdata, frames, time, status):
-#         try:
-#             outdata[:] = q.get_nowait()
-#         except queue.Empty:
-#             outdata[:] = 0
-
-#     audio_out.start(on_output)
-#     audio_in.start(on_input)
-
-#     time.sleep(30)
-#     audio_in.stop()
-#     audio_out.stop()
