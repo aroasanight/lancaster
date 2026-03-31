@@ -358,6 +358,95 @@ class PlaybackBuffer:
 
 
 
+class Connection:
+    def __init__(self, config):
+        self.config = config
+        self.sock = None
+        self.server = None
+        self.running = False
+        self.send_lock = threading.Lock()
+        self.on_message = None
+
+    def connect(self, host: str, on_message):
+        self.on_message = on_message
+        self.running = True
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+        nic_ip = self.config.nic_ip if hasattr(self.config, "nic_ip") else "0.0.0.0"
+        if nic_ip and nic_ip != "0.0.0.0":
+            s.bind((nic_ip, 0))
+
+        s.connect((host, self.config.port))
+        self.sock = s
+        print(f"[Connection] Connected to {host}:{self.config.port}")
+
+        threading.Thread(target=self.reader, daemon=True).start()
+
+    def listen(self, on_message):
+        self.on_message = on_message
+        self.running = True
+
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOLsockET, socket.SO_REUSEADDR, 1)
+
+        nic_ip = self.config.nic_ip if hasattr(self.config, "nic_ip") else "0.0.0.0"
+        bind_ip = nic_ip if nic_ip and nic_ip != "0.0.0.0" else ""
+        self.server.bind((bind_ip, self.config.port))
+        self.server.listen(1)
+        self.server.settimeout(1.0)
+
+        print(f"[Connection] Listening on port {self.config.port}")
+        threading.Thread(target=self.accept_loop, daemon=True).start()
+
+    def accept_loop(self):
+        while self.running:
+            try:
+                conn, addr = self.server.accept()
+                conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                self.sock = conn
+                print(f"[Connection] Transmitter connected from {addr[0]}")
+                self.reader()
+                self.sock = None
+                print("[Connection] Transmitter disconnected — waiting for reconnect")
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+    def reader(self):
+        while self.running:
+            try:
+                msg_type, payload = recv_frame(self.sock)
+                if self.on_message:
+                    self.on_message(msg_type, payload)
+            except (ConnectionError, OSError):
+                break
+
+    def send(self, msg_type: int, payload: bytes):
+        if not self.sock:
+            return
+        with self.send_lock:
+            try:
+                send_frame(self.sock, msg_type, payload)
+            except OSError:
+                pass
+
+    def disconnect(self):
+        self.running = False
+        if self.sock:
+            try: self.sock.close()
+            except OSError: pass
+            self.sock = None
+        if self.server:
+            try: self.server.close()
+            except OSError: pass
+            self.server = None
+        print("[Connection] Disconnected")
+
+
+
 # LOOPBACK TEST
 
 # if __name__ == "__main__":
