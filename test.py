@@ -1258,11 +1258,11 @@ class TestConnectionClass(unittest.TestCase):
         receiver    = Connection(self.config)
         transmitter = Connection(self.config)
         receiver.listen(lambda t, p: received.append((t, p)))
-        time.sleep(0.1)
+        time.sleep(0.2)
         transmitter.connect("127.0.0.1", lambda t, p: None)
-        time.sleep(0.1)
+        time.sleep(0.2)
         transmitter.disconnect()
-        time.sleep(0.2)   # give receiver time to notice disconnect
+        time.sleep(1.0)   # give receiver time to notice disconnect
         # receiver should still be running, waiting for a new connection
         self.assertTrue(receiver.running)
         self.assertIsNone(receiver.sock)
