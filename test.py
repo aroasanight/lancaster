@@ -1560,18 +1560,21 @@ class TestDeviceMonitor(unittest.TestCase):
 
     # poll loop — device change detection
 
+    def one_shot_sleep(self, monitor):
+        call_count = [0]
+        def fake_sleep(_):
+            call_count[0] += 1
+            if call_count[0] >= 2:   # stop after second sleep
+                monitor.running = False
+        return fake_sleep
+
     @patch("main.list_input_devices", side_effect=[["MacBook Pro Microphone"], ["MacBook Pro Microphone", "UMC404HD 192k"]])
     def test_poll_loop_detects_input_device_added(self, _):
         monitor = DeviceMonitor(self.sync, "input")
         monitor.last_devices = ["MacBook Pro Microphone"]
         monitor.running = True
-        # call poll_loop directly with a short sleep patch so it only runs once
-        with patch("time.sleep", return_value=None):
-            # run one iteration manually, not in thread
-            current = list_input_devices()
-            if current != monitor.last_devices:
-                monitor.last_devices = current
-                monitor.sync.send_device_list(monitor.mode)
+        with patch("time.sleep", side_effect=self.one_shot_sleep(monitor)):
+            monitor.poll_loop()
         self.assertIn("input", self.sync.sent_device_lists)
 
     @patch("main.list_input_devices", side_effect=[["MacBook Pro Microphone", "UMC404HD 192k"], ["MacBook Pro Microphone"]])
@@ -1579,11 +1582,8 @@ class TestDeviceMonitor(unittest.TestCase):
         monitor = DeviceMonitor(self.sync, "input")
         monitor.last_devices = ["MacBook Pro Microphone", "UMC404HD 192k"]
         monitor.running = True
-        with patch("time.sleep", return_value=None):
-            current = list_input_devices()
-            if current != monitor.last_devices:
-                monitor.last_devices = current
-                monitor.sync.send_device_list(monitor.mode)
+        with patch("time.sleep", side_effect=self.one_shot_sleep(monitor)):
+            monitor.poll_loop()
         self.assertIn("input", self.sync.sent_device_lists)
 
     @patch("main.list_output_devices", side_effect=[["MacBook Pro Speakers"], ["MacBook Pro Speakers", "External Headphones"]])
@@ -1591,11 +1591,8 @@ class TestDeviceMonitor(unittest.TestCase):
         monitor = DeviceMonitor(self.sync, "output")
         monitor.last_devices = ["MacBook Pro Speakers"]
         monitor.running = True
-        with patch("time.sleep", return_value=None):
-            current = list_output_devices()
-            if current != monitor.last_devices:
-                monitor.last_devices = current
-                monitor.sync.send_device_list(monitor.mode)
+        with patch("time.sleep", side_effect=self.one_shot_sleep(monitor)):
+            monitor.poll_loop()
         self.assertIn("output", self.sync.sent_device_lists)
 
     @patch("main.list_input_devices", return_value=["MacBook Pro Microphone"])
@@ -1603,11 +1600,8 @@ class TestDeviceMonitor(unittest.TestCase):
         monitor = DeviceMonitor(self.sync, "input")
         monitor.last_devices = ["MacBook Pro Microphone"]
         monitor.running = True
-        with patch("time.sleep", return_value=None):
-            current = list_input_devices()
-            if current != monitor.last_devices:
-                monitor.last_devices = current
-                monitor.sync.send_device_list(monitor.mode)
+        with patch("time.sleep", side_effect=self.one_shot_sleep(monitor)):
+            monitor.poll_loop()
         self.assertEqual(self.sync.sent_device_lists, [])
 
     @patch("main.list_input_devices", side_effect=[["MacBook Pro Microphone"], ["MacBook Pro Microphone", "UMC404HD 192k"]])
@@ -1615,11 +1609,8 @@ class TestDeviceMonitor(unittest.TestCase):
         monitor = DeviceMonitor(self.sync, "input")
         monitor.last_devices = ["MacBook Pro Microphone"]
         monitor.running = True
-        with patch("time.sleep", return_value=None):
-            current = list_input_devices()
-            if current != monitor.last_devices:
-                monitor.last_devices = current
-                monitor.sync.send_device_list(monitor.mode)
+        with patch("time.sleep", side_effect=self.one_shot_sleep(monitor)):
+            monitor.poll_loop()
         self.assertEqual(monitor.last_devices, ["MacBook Pro Microphone", "UMC404HD 192k"])
 
 
