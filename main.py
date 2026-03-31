@@ -484,9 +484,11 @@ class Connection:
 
 
 class SettingsSync:
-    def __init__(self, config, connection):
+    def __init__(self, config, connection, on_command=None):
         self.config = config
         self.connection = connection
+
+        self.on_command = on_command
 
         self.remote_input_devices  = []
         self.remote_output_devices = []
@@ -536,6 +538,10 @@ class SettingsSync:
                     self.remote_input_devices = data["devices"]
                 elif data["kind"] == "output":
                     self.remote_output_devices = data["devices"]
+
+            elif data["type"] == "command":
+                if self.on_command:
+                    self.on_command(data["action"])
 
 
 
@@ -658,3 +664,91 @@ class ReceiveStream:
             self.stop_stream()
         self.monitor.stop()
         self.connection.disconnect()
+
+
+
+class App:
+    def __init__(self, config: Config):
+        self.config = config
+        self.stream = None
+        self.connection = None
+        self.sync = None
+        self.monitor = None
+        self.buffer = None
+
+    def on_command(self, action: str):
+        if action == "start":
+            self.start_stream()
+        elif action == "stop":
+            self.stop_stream()
+
+    def build_transmitter(self):
+        self.connection = Connection(self.config)
+        self.sync       = SettingsSync(self.config, self.connection, on_command=self.on_command)
+        self.monitor    = DeviceMonitor(self.sync, "input")
+        self.stream     = TransmitStream(self.config, self.connection, self.sync, self.monitor)
+
+    def build_receiver(self):
+        self.connection = Connection(self.config)
+        self.sync       = SettingsSync(self.config, self.connection, on_command=self.on_command)
+        self.monitor    = DeviceMonitor(self.sync, "output")
+        self.buffer     = PlaybackBuffer(self.config)
+        self.stream     = ReceiveStream(self.config, self.connection, self.sync, self.monitor, self.buffer)
+
+    def pair(self, host: str = None):
+        if self.config.mode == "transmitter":
+            if host is None:
+                raise ValueError("host is required for transmitter mode")
+            self.build_transmitter()
+            self.stream.connect(host)
+        elif self.config.mode == "receiver":
+            self.build_receiver()
+            self.stream.listen()
+
+    def start_stream(self):
+        if self.stream is None:
+            raise RuntimeError("Not paired — call pair() first")
+        self.stream.start_stream()
+
+    def stop_stream(self):
+        if self.stream is None:
+            return
+        self.stream.stop_stream()
+
+    def unpair(self):
+        if self.stream is None:
+            return
+        self.stream.disconnect()
+        self.stream = None
+        self.connection = None
+        self.sync = None
+        self.monitor = None
+        self.buffer = None
+
+    def push_setting(self, key: str, value):
+        setter = {
+            "sr":       self.config.set_sr,
+            "ch":       self.config.set_ch,
+            "buf":      self.config.set_buf,
+            "gain":     self.config.set_gain,
+            "in_dev":   self.config.set_in_dev,
+            "out_dev":  self.config.set_out_dev,
+            "mode":     self.config.set_mode,
+            "port":     self.config.set_port,
+            "nic_ip":   self.config.set_nic_ip,
+            "target_ip": self.config.set_target_ip,
+        }
+        if key in setter:
+            try:
+                setter[key](value)
+            except Exception as e:
+                print(f"[App] Invalid value for {key}: {e}")
+                return
+        if self.sync is not None:
+            self.sync.send_setting(key, value)
+        self.config.save()
+
+    def send_command(self, action: str):
+        if self.sync is not None:
+            self.sync.send_command(action)
+
