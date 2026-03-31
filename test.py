@@ -1254,8 +1254,8 @@ class TestConnectionClass(unittest.TestCase):
         conn.disconnect()   # should do nothing
 
     def test_receiver_waits_for_reconnect_after_transmitter_drops(self):
-        received    = []
-        receiver    = Connection(self.config)
+        received = []
+        receiver = Connection(self.config)
         transmitter = Connection(self.config)
         receiver.listen(lambda t, p: received.append((t, p)))
         time.sleep(0.2)
@@ -1266,12 +1266,12 @@ class TestConnectionClass(unittest.TestCase):
         # poll until sock is None or timeout after 5 seconds
         deadline = time.time() + 5.0
         while time.time() < deadline:
-            if receiver._sock is None:
+            if receiver.sock is None:
                 break
             time.sleep(0.05)
 
         self.assertTrue(receiver._running)
-        self.assertIsNone(receiver._sock)
+        self.assertIsNone(receiver.sock)
         receiver.disconnect()
 
     # ── config values used correctly ──────────────────────────────────────────
