@@ -2,6 +2,7 @@ import unittest, os, json
 from unittest.mock import patch, MagicMock
 import numpy as np
 from main import *
+import time
 
 # unit testing derived from https://www.geeksforgeeks.org/python/unit-testing-python-unittest/
 
@@ -1087,6 +1088,200 @@ class TestPlaybackBuffer(unittest.TestCase):
         buf.reset()
         result = buf.pop()
         np.testing.assert_array_equal(result, np.zeros((BLOCKSIZE, self.config.ch), dtype="float32"))
+
+
+
+class TestConnectionClass(unittest.TestCase):
+
+    def setUp(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+        self.config = Config(path="test_config.json")
+        # find a free port dynamically (5010 broke when tests failed and didn't release it properly)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            free_port = s.getsockname()[1]
+        self.config.set_port(free_port)
+
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+
+    def make_connected_pair(self):
+        received = []
+        receiver = Connection(self.config)
+        transmitter = Connection(self.config)
+
+        receiver.listen(lambda msg_type, payload: received.append((msg_type, payload)))
+        time.sleep(0.1)  # give the server socket time to start listening
+        transmitter.connect("127.0.0.1", lambda msg_type, payload: received.append((msg_type, payload)))
+        time.sleep(0.1)  # give the connection time to connect
+
+        return receiver, transmitter, received
+
+    def test_transmitter_connects_successfully(self):
+        receiver = Connection(self.config)
+        transmitter = Connection(self.config)
+        receiver.listen(lambda t, p: None)
+        time.sleep(0.1)
+        transmitter.connect("127.0.0.1", lambda t, p: None)
+        time.sleep(0.1)
+        self.assertIsNotNone(transmitter.sock)
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_receiver_accepts_connection(self):
+        receiver = Connection(self.config)
+        transmitter = Connection(self.config)
+        receiver.listen(lambda t, p: None)
+        time.sleep(0.1)
+        transmitter.connect("127.0.0.1", lambda t, p: None)
+        time.sleep(0.1)
+        self.assertIsNotNone(receiver.sock)
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_receiver_running_after_listen(self):
+        receiver = Connection(self.config)
+        receiver.listen(lambda t, p: None)
+        time.sleep(0.1)
+        self.assertTrue(receiver.running)
+        receiver.disconnect()
+
+    def test_transmitter_running_after_connect(self):
+        receiver = Connection(self.config)
+        transmitter = Connection(self.config)
+        receiver.listen(lambda t, p: None)
+        time.sleep(0.1)
+        transmitter.connect("127.0.0.1", lambda t, p: None)
+        time.sleep(0.1)
+        self.assertTrue(transmitter.running)
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_transmitter_sends_audio_frame(self):
+        receiver, transmitter, received = self.make_connected_pair()
+        transmitter.send(MSG_AUDIO, b"hello")
+        time.sleep(0.1)
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0][0], MSG_AUDIO)
+        self.assertEqual(received[0][1], b"hello")
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_transmitter_sends_control_frame(self):
+        receiver, transmitter, received = self.make_connected_pair()
+        transmitter.send(MSG_CONTROL, b'{"key": "gain", "value": 2.0}')
+        time.sleep(0.1)
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0][0], MSG_CONTROL)
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_receiver_sends_back_to_transmitter(self):
+        received_by_transmitter = []
+        receiver    = Connection(self.config)
+        transmitter = Connection(self.config)
+        receiver.listen(lambda t, p: None)
+        time.sleep(0.1)
+        transmitter.connect("127.0.0.1", lambda t, p: received_by_transmitter.append((t, p)))
+        time.sleep(0.1)
+        receiver.send(MSG_CONTROL, b'{"key": "buf", "value": 300}')
+        time.sleep(0.1)
+        self.assertEqual(len(received_by_transmitter), 1)
+        self.assertEqual(received_by_transmitter[0][0], MSG_CONTROL)
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_multiple_frames_received_in_order(self):
+        receiver, transmitter, received = self.make_connected_pair()
+        transmitter.send(MSG_AUDIO,   b"according to all known las of abiation")
+        transmitter.send(MSG_CONTROL, b"there is now ay that the bee should be able to fly")
+        transmitter.send(MSG_AUDIO,   b"its wings are too small to get its fat little b ody off the ground")
+        transmitter.send(MSG_AUDIO,   b"the bee of course flies anyway")
+        transmitter.send(MSG_AUDIO,   b"because bees dont care what humans think is impossible")
+        time.sleep(0.1)
+        self.assertEqual(len(received), 5)
+        self.assertEqual(received[0][1], b"according to all known las of abiation")
+        self.assertEqual(received[1][1], b"there is now ay that the bee should be able to fly")
+        self.assertEqual(received[2][1], b"its wings are too small to get its fat little b ody off the ground")
+        self.assertEqual(received[3][1], b"the bee of course flies anyway")
+        self.assertEqual(received[4][1], b"because bees dont care what humans think is impossible")
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_empty_payload_sent_and_received(self):
+        receiver, transmitter, received = self.make_connected_pair()
+        transmitter.send(MSG_CONTROL, b"")
+        time.sleep(0.1)
+        self.assertEqual(received[0][1], b"")
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_large_payload_sent_and_received(self):
+        receiver, transmitter, received = self.make_connected_pair()
+        big = b"x" * 65536
+        transmitter.send(MSG_AUDIO, big)
+        time.sleep(0.2)  # larger payload needs more time
+        self.assertEqual(received[0][1], big)
+        receiver.disconnect()
+        transmitter.disconnect()
+
+    def test_send_does_not_crash_when_not_connected(self):
+        transmitter = Connection(self.config)
+        transmitter.send(MSG_AUDIO, b"according to all known laws of aviation") # should do nothing, not throw
+
+    def test_disconnect_sets_running_false(self):
+        receiver, transmitter, _ = self.make_connected_pair()
+        transmitter.disconnect()
+        self.assertFalse(transmitter.running)
+        receiver.disconnect()
+
+    def test_disconnect_clearssock(self):
+        receiver, transmitter, _ = self.make_connected_pair()
+        transmitter.disconnect()
+        self.assertIsNone(transmitter.sock)
+        receiver.disconnect()
+
+    def test_receiver_disconnect_clears_server(self):
+        receiver, transmitter, _ = self.make_connected_pair()
+        receiver.disconnect()
+        self.assertIsNone(receiver.server)
+        transmitter.disconnect()
+
+    def test_disconnect_before_connect_does_not_crash(self):
+        conn = Connection(self.config)
+        conn.disconnect()   # should do nothing
+
+    def test_receiver_waits_for_reconnect_after_transmitter_drops(self):
+        received    = []
+        receiver    = Connection(self.config)
+        transmitter = Connection(self.config)
+        receiver.listen(lambda t, p: received.append((t, p)))
+        time.sleep(0.1)
+        transmitter.connect("127.0.0.1", lambda t, p: None)
+        time.sleep(0.1)
+        transmitter.disconnect()
+        time.sleep(0.2)   # give receiver time to notice disconnect
+        # receiver should still be running, waiting for a new connection
+        self.assertTrue(receiver.running)
+        self.assertIsNone(receiver.sock)
+        receiver.disconnect()
+
+    # ── config values used correctly ──────────────────────────────────────────
+
+    def test_uses_config_port(self):
+        receiver    = Connection(self.config)
+        transmitter = Connection(self.config)
+        receiver.listen(lambda t, p: None)
+        time.sleep(0.1)
+        transmitter.connect("127.0.0.1", lambda t, p: None)
+        time.sleep(0.1)
+        self.assertIsNotNone(transmitter.sock)
+        receiver.disconnect()
+        transmitter.disconnect()
+
+
 
 if __name__ == "__main__":
     unittest.main()
