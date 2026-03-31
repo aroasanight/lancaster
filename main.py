@@ -56,7 +56,7 @@ def find_device_by_name(name:str, kind:str):
 
 
 class Config:
-    def __init__(self, path="config.json", mode=None, ch=None, sr=None, buf=None, gain=None, port=None, in_dev=None, out_dev=None):
+    def __init__(self, path="config.json", mode=None, ch=None, sr=None, buf=None, gain=None, port=None, in_dev=None, out_dev=None, nic_ip=None, target_ip=None):
         self.path   = path
         self.mode   = "transmitter"
         self.ch     = 2
@@ -66,6 +66,8 @@ class Config:
         self.port   = 5005
         self.in_dev = None  # none will use system defaults
         self.out_dev = None
+        self.nic_ip = "0.0.0.0" # will use system default
+        self.target_ip = None
 
         valid_path = False
         while not valid_path:
@@ -107,6 +109,14 @@ class Config:
             try: self.set_port(port)
             except Exception: pass
         
+        if nic_ip is not None:
+            try: self.set_nic_ip(nic_ip)
+            except Exception: pass
+
+        if target_ip is not None:
+            try: self.set_target_ip(target_ip)
+            except Exception: pass
+        
         self.save()
     
     # to GET use config.var_name as a direct reference
@@ -120,7 +130,7 @@ class Config:
                 with open(path, 'r') as f:
                     data = json.load(f)
                 for key in data.keys():
-                    if not key in ["mode", "ch", "sr", "buf", "gain", "port", "in_dev", "out_dev"]:
+                    if not key in ["mode", "ch", "sr", "buf", "gain", "port", "nic_ip", "target_ip", "in_dev", "out_dev"]:
                         raise ValueError(f"Invalid path: {path} - file exists but contains keys this program can't generate, possibly config file for another program?")
             except FileNotFoundError:
                 pass
@@ -162,6 +172,26 @@ class Config:
             raise ValueError(f"Invalid output device: {out_dev} — must be a string name or None for default")
         self.out_dev = out_dev
     
+    def set_nic_ip(self, nic_ip: str):
+        if not isinstance(nic_ip, str):
+            raise ValueError(f"Invalid NIC IP: {nic_ip} — must be a string")
+        parts = nic_ip.split(".")
+        if nic_ip != "0.0.0.0":
+            if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                raise ValueError(f"Invalid NIC IP: {nic_ip} — must be a valid IPv4 address or 0.0.0.0")
+        self.nic_ip = nic_ip
+
+    def set_target_ip(self, target_ip: str):
+        if target_ip is None:
+            self.target_ip = None
+            return
+        if not isinstance(target_ip, str):
+            raise ValueError(f"Invalid target IP: {target_ip} — must be a string")
+        parts = target_ip.split(".")
+        if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+            raise ValueError(f"Invalid target IP: {target_ip} — must be a valid IPv4 address")
+        self.target_ip = target_ip
+    
 
     # save/load to/from json
 
@@ -175,6 +205,8 @@ class Config:
             "port": self.port,
             "in_dev": self.in_dev,
             "out_dev": self.out_dev,
+            "nic_ip": self.nic_ip,
+            "target_ip": self.target_ip,
         }
 
         with open(self.path, 'w') as f:
@@ -206,6 +238,12 @@ class Config:
         except Exception: pass
 
         try: self.set_out_dev(data.get("out_dev", self.out_dev))
+        except Exception: pass
+
+        try: self.set_nic_ip(data.get("nic_ip", self.nic_ip))
+        except Exception: pass
+
+        try: self.set_target_ip(data.get("target_ip", self.target_ip))
         except Exception: pass
 
         self.save()
