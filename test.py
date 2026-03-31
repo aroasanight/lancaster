@@ -47,6 +47,10 @@ class TestConfigClass(unittest.TestCase):
         with self.assertRaises((TypeError, ValueError)):
             c.set_sr("according to all known laws of aviation, there is no way that the bee should be able to fly.")
 
+    def test_default_sr(self):
+        c = Config(path="test_config.json")
+        self.assertEqual(c.sr, 48000)
+
 
 
     # buffer
@@ -70,6 +74,10 @@ class TestConfigClass(unittest.TestCase):
         c = Config(path="test_config.json")
         with self.assertRaises((TypeError, ValueError)):
             c.set_buf("according to all known laws of aviation, there is no way that the bee should be able to fly.")
+
+    def test_default_buf(self):
+        c = Config(path="test_config.json")
+        self.assertEqual(c.buf, 500)
 
 
 
@@ -99,6 +107,10 @@ class TestConfigClass(unittest.TestCase):
         c = Config(path="test_config.json")
         with self.assertRaises((TypeError, ValueError)):
             c.set_gain("according to all known laws of aviation, there is no way that the bee should be able to fly.")
+
+    def test_default_gain(self):
+        c = Config(path="test_config.json")
+        self.assertEqual(c.gain, 1.0)
 
 
 
@@ -134,30 +146,197 @@ class TestConfigClass(unittest.TestCase):
         with self.assertRaises((TypeError, ValueError)):
             c.set_port("according to all known laws of aviation, there is no way that the bee should be able to fly.")
 
+    def test_default_port(self):
+        c = Config(path="test_config.json")
+        self.assertEqual(c.port, 5005)
+    
+    
+    
+    # mode
+
+    def test_valid_mode_transmitter(self):
+        c = Config(path="test_config.json")
+        c.set_mode("transmitter")
+        self.assertEqual(c.mode, "transmitter")
+
+    def test_valid_mode_receiver(self):
+        c = Config(path="test_config.json")
+        c.set_mode("receiver")
+        self.assertEqual(c.mode, "receiver")
+
+    def test_invalid_mode(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises(ValueError):
+            c.set_mode("according to all known laws of aviation, there is no way that the bee should be able to fly.")
+
+    def test_invalid_mode_format(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises((TypeError, ValueError)):
+            c.set_mode(1853)
+
+    def test_default_mode(self):
+        c = Config(path="test_config.json")
+        self.assertEqual(c.mode, "transmitter")
+
+    def test_init_mode_override(self):
+        c = Config(path="test_config.json", mode="receiver")
+        self.assertEqual(c.mode, "receiver")
+
+    def test_init_invalid_mode_falls_back_to_default(self):
+        c = Config(path="test_config.json", mode="banana")
+        self.assertEqual(c.mode, "transmitter")
+
+
+
+    # channels
+
+    def test_valid_ch(self):
+        c = Config(path="test_config.json")
+        c.set_ch(2)
+        self.assertEqual(c.ch, 2)
+
+    def test_valid_ch_lower_bound(self):
+        c = Config(path="test_config.json")
+        c.set_ch(1)
+        self.assertEqual(c.ch, 1)
+
+    def test_invalid_ch_lower_bound(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises(ValueError):
+            c.set_ch(0)
+
+    def test_invalid_ch_negative(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises(ValueError):
+            c.set_ch(-1)
+
+    def test_invalid_ch_format(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises((TypeError, ValueError)):
+            c.set_ch("according to all known laws of aviation, there is no way that the bee should be able to fly.")
+
+    def test_default_ch(self):
+        c = Config(path="test_config.json")
+        self.assertEqual(c.ch, 2)
+
+    def test_init_ch_override(self):
+        c = Config(path="test_config.json", ch=1)
+        self.assertEqual(c.ch, 1)
+
+    def test_init_invalid_ch_falls_back_to_default(self):
+        c = Config(path="test_config.json", ch=0)
+        self.assertEqual(c.ch, 2)
+
+
+
+    # input device
+
+    def test_valid_in_dev_string(self):
+        c = Config(path="test_config.json")
+        c.set_in_dev("MacBook Pro Microphone")
+        self.assertEqual(c.in_dev, "MacBook Pro Microphone")
+
+    def test_valid_in_dev_none(self):
+        c = Config(path="test_config.json")
+        c.set_in_dev(None)
+        self.assertIsNone(c.in_dev)
+
+    def test_invalid_in_dev_int(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises(ValueError):
+            c.set_in_dev(2)
+
+    def test_invalid_in_dev_bool(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises(ValueError):
+            c.set_in_dev(True)
+
+    def test_default_in_dev(self):
+        c = Config(path="test_config.json")
+        self.assertIsNone(c.in_dev)
+
+    def test_in_dev_saves_and_loads(self):
+        c = Config(path="test_config.json")
+        c.set_in_dev("MacBook Pro Microphone")
+        c.save()
+        c2 = Config(path="test_config.json")
+        self.assertEqual(c2.in_dev, "MacBook Pro Microphone")
+
+    def test_in_dev_none_saves_and_loads(self):
+        c = Config(path="test_config.json")
+        c.set_in_dev(None)
+        c.save()
+        c2 = Config(path="test_config.json")
+        self.assertIsNone(c2.in_dev)
+
+
+
+    # output device
+
+    def test_valid_out_dev_string(self):
+        c = Config(path="test_config.json")
+        c.set_out_dev("MacBook Pro Speakers")
+        self.assertEqual(c.out_dev, "MacBook Pro Speakers")
+
+    def test_valid_out_dev_none(self):
+        c = Config(path="test_config.json")
+        c.set_out_dev(None)
+        self.assertIsNone(c.out_dev)
+
+    def test_invalid_out_dev_int(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises(ValueError):
+            c.set_out_dev(2)
+
+    def test_invalid_out_dev_bool(self):
+        c = Config(path="test_config.json")
+        with self.assertRaises(ValueError):
+            c.set_out_dev(True)
+
+    def test_default_out_dev(self):
+        c = Config(path="test_config.json")
+        self.assertIsNone(c.out_dev)
+
+    def test_out_dev_saves_and_loads(self):
+        c = Config(path="test_config.json")
+        c.set_out_dev("MacBook Pro Speakers")
+        c.save()
+        c2 = Config(path="test_config.json")
+        self.assertEqual(c2.out_dev, "MacBook Pro Speakers")
+
+    def test_out_dev_none_saves_and_loads(self):
+        c = Config(path="test_config.json")
+        c.set_out_dev(None)
+        c.save()
+        c2 = Config(path="test_config.json")
+        self.assertIsNone(c2.out_dev)
+
 
 
     # save/load
 
     def test_save_and_load(self):
 
-        # TODO put in in/out dev tests once implemented in script
-
         c = Config(path="test_config.json")
+        c.set_mode("receiver")
+        c.set_ch(2)
         c.set_sr(44100)
         c.set_buf(300)
         c.set_gain(2.0)
         c.set_port(5006)
-        # c.set_in_dev(some_value)
-        # c.set_out_dev(some_value)
+        c.set_in_dev("some_value1")
+        c.set_out_dev("some_value2")
         c.save()
 
         c2 = Config(path="test_config.json")
+        self.assertEqual(c2.mode, "receiver")
+        self.assertEqual(c2.ch, 2)
         self.assertEqual(c2.sr, 44100)
         self.assertEqual(c2.buf, 300)
         self.assertEqual(c2.gain, 2.0)
         self.assertEqual(c2.port, 5006)
-        # self.assertEqual(c2.in_dev, some_value)
-        # self.assertEqual(c2.out_dev, some_value)
+        self.assertEqual(c2.in_dev, "some_value1")
+        self.assertEqual(c2.out_dev, "some_value2")
 
     def test_no_file_creates_one(self):
         self.assertFalse(os.path.exists("test_config.json"))
@@ -235,34 +414,6 @@ class TestConfigClass(unittest.TestCase):
         with patch("builtins.input", side_effect=EOFError):
             with self.assertRaises((EOFError, RuntimeError)):
                 c = Config(path="test_config.txt")
-
-
-
-    # defaults
-
-    def test_default_sr(self):
-        c = Config(path="test_config.json")
-        self.assertEqual(c.sr, 48000)
-
-    def test_default_buf(self):
-        c = Config(path="test_config.json")
-        self.assertEqual(c.buf, 500)
-
-    def test_default_gain(self):
-        c = Config(path="test_config.json")
-        self.assertEqual(c.gain, 1.0)
-
-    def test_default_port(self):
-        c = Config(path="test_config.json")
-        self.assertEqual(c.port, 5005)
-
-    def test_default_in_dev(self):
-        c = Config(path="test_config.json")
-        self.assertIsNone(c.in_dev)
-
-    def test_default_out_dev(self):
-        c = Config(path="test_config.json")
-        self.assertIsNone(c.out_dev)
 
 
 
