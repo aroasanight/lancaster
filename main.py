@@ -311,22 +311,46 @@ class Config:
             data = json.load(f)
 
         self._try(self.set_mode, data.get("mode", self.mode))
-
+        try: self.set_mode(data.get("mode", self.mode))
+        except Exception: pass
+        
         tx = data.get("transmitter-config", {})
-        self._try(self.set_t_nic_ip, tx.get("nic_ip", self.t_nic_ip))
-        self._try(self.set_target_ip, tx.get("target_ip", self.target_ip))
-        self._try(self.set_target_port, tx.get("target_port", self.target_port))
-        self._try(self.set_in_dev, tx.get("in_dev", self.in_dev))
+        try: self.set_t_nic_ip(tx.get("nic_ip", self.t_nic_ip))
+        except Exception: pass
+
+        try: self.set_target_ip(tx.get("target_ip", self.target_ip))
+        except Exception: pass
+
+        try: self.set_target_port(tx.get("target_port", self.target_port))
+        except Exception: pass
+
+        try: self.set_in_dev(tx.get("in_dev", self.in_dev))
+        except Exception: pass
 
         rx = data.get("receiver-config", {})
-        self._try(self.set_r_nic_ip, rx.get("nic_ip", self.r_nic_ip))
-        self._try(self.set_port, rx.get("port", self.port))
-        self._try(self.set_ch, rx.get("ch", self.ch))
-        self._try(self.set_sr, rx.get("sr", self.sr))
-        self._try(self.set_buf, rx.get("buf", self.buf))
-        self._try(self.set_tolerance, rx.get("tolerance", self.tolerance))
-        self._try(self.set_gain, rx.get("gain", self.gain))
-        self._try(self.set_out_dev, rx.get("out_dev", self.out_dev))
+        try: self.set_r_nic_ip(rx.get("nic_ip", self.r_nic_ip))
+        except Exception: pass
+
+        try: self.set_target_port(rx.get("target_port", self.target_port))
+        except Exception: pass
+
+        try: self.set_ch(rx.get("ch", self.ch))
+        except Exception: pass
+        
+        try: self.set_sr(rx.get("sr", self.sr))
+        except Exception: pass
+
+        try: self.set_buf(rx.get("buf", self.buf))
+        except Exception: pass
+
+        try: self.set_gain(rx.get("gain", self.gain))
+        except Exception: pass
+
+        try: self.set_tolerance(rx.get("tolerance", self.tolerance))
+        except Exception: pass
+        
+        try: self.set_out_dev(rx.get("out_dev", self.out_dev))
+        except Exception: pass
 
         self.save()
 
