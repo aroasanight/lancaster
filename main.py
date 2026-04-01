@@ -6,6 +6,14 @@ import threading
 import queue
 import numpy as np
 import time
+import logging
+log = logging.getLogger("main")
+
+logging.basicConfig(
+    level=logging.DEBUG,   # change to DEBUG when diagnosing issues
+    format="%(asctime)s.%(msecs)03d [%(name)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
 
 
 BLOCKSIZE = 1024
@@ -16,6 +24,7 @@ MSG_CONTROL = 0x02
 
 # framing functions
 def send_frame(sock, msg_type: int, payload: bytes):
+    # log.debug(f"send_frame type={msg_type:#04x} len={len(payload)}")
     header = struct.pack(">BI", msg_type, len(payload))
     sock.sendall(header + payload)
 
@@ -32,6 +41,7 @@ def recv_frame(sock) -> tuple:
     header = recv_exactly(sock, 5)
     msg_type, length = struct.unpack(">BI", header)
     payload = recv_exactly(sock, length) if length > 0 else b""
+    # log.debug(f"recv_frame type={msg_type:#04x} len={length}")
     return msg_type, payload
 
 
@@ -352,14 +362,17 @@ class PlaybackBuffer:
         with self.lock:
             if not self.pfilled:
                 queued_ms = (self.queue.qsize() * BLOCKSIZE / self.config.sr) * 1000
+                log.debug(f"[Buffer] prefilling {queued_ms:.0f}/{self.config.buf}ms qsize={self.queue.qsize()}")
                 if queued_ms < self.config.buf:
                     return silence
+                log.info(f"[Buffer] prefill complete at {queued_ms:.0f}ms")
                 self.pfilled = True
 
         try:
             frames = self.queue.get_nowait()
             return (frames * self.config.gain).astype(np.float32)
         except queue.Empty:
+            log.warning("[Buffer] UNDERRUN — queue ran dry")
             with self.lock:
                 self.pfilled = False
             return silence
@@ -463,12 +476,13 @@ class Connection:
 
     def send(self, msg_type: int, payload: bytes):
         if not self.sock:
+            log.warning(f"[Connection] send called but no socket type={msg_type:#04x}")
             return
         with self.send_lock:
             try:
                 send_frame(self.sock, msg_type, payload)
-            except OSError:
-                pass
+            except OSError as e:
+                log.error(f"[Connection] send failed: {e}")
 
     def disconnect(self):
         self.running = False
@@ -587,7 +601,7 @@ class TransmitStream:
         self.sync.send_all_settings()
         self.sync.send_device_list("input")
         self.monitor.start()
-    
+
     def start_stream(self):
         self.monitor.stop()
         time.sleep(0.1)
@@ -607,7 +621,7 @@ class TransmitStream:
         self.monitor.start()
 
     def disconnect(self):
-        
+
         if self.audio_in is not None: self.stop_stream()
 
         self.monitor.stop()
@@ -629,6 +643,9 @@ class ReceiveStream:
     def on_message(self, msg_type, payload):
         if msg_type == MSG_AUDIO:
             frames = np.frombuffer(payload, dtype=np.float32).copy()
+            if frames.size % self.config.ch != 0:
+                log.warning(f"[Receive] malformed frame size={frames.size} ch={self.config.ch}")
+                return
             frames = frames.reshape(-1, self.config.ch)
             self.buffer.push(frames)
         elif msg_type == MSG_CONTROL:
