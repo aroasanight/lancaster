@@ -83,19 +83,35 @@ def list_output_devices() -> list:
 
 
 class Config:
-    def __init__(self, path="config.json", mode=None, ch=None, sr=None, buf=None, gain=None, port=None, in_dev=None, out_dev=None, nic_ip=None, target_ip=None, tolerance=None):
+    TRANSMITTER_KEYS = {"t_nic_ip", "target_ip", "target_port", "in_dev"}
+    RECEIVER_KEYS = {"r_nic_ip", "port", "ch", "sr", "buf", "tolerance", "gain", "out_dev"}
+
+    def __init__(self, path="lancaster-config.json", mode=None,
+                 # transmitter
+                 t_nic_ip=None, target_ip=None, target_port=None, in_dev=None,
+                 # receiver
+                 r_nic_ip=None, port=None, ch=None, sr=None, buf=None,
+                 tolerance=None, gain=None, out_dev=None):
+        
         self.path   = path
         self.mode   = "transmitter"
+
+        # transmitter
+        self.t_nic_ip = "0.0.0.0"
+        self.target_ip = None
+        self.target_port = 5005
+        self.in_dev = None  # none will use system defaults
+
+        # receiver
+        self.r_nic_ip = "0.0.0.0"
         self.ch     = 2
         self.sr     = 48000
         self.buf    = 500
         self.gain   = 1.0
         self.port   = 5005
         self.tolerance = 100
-        self.in_dev = None  # none will use system defaults
         self.out_dev = None
-        self.nic_ip = "0.0.0.0" # will use system default
-        self.target_ip = None
+
 
         valid_path = False
         while not valid_path:
@@ -144,10 +160,6 @@ class Config:
         if out_dev is not None:
             try: self.set_out_dev(out_dev)
             except Exception: pass
-        
-        if nic_ip is not None:
-            try: self.set_nic_ip(nic_ip)
-            except Exception: pass
 
         if target_ip is not None:
             try: self.set_target_ip(target_ip)
@@ -156,9 +168,21 @@ class Config:
         if tolerance is not None:
             try: self.set_tolerance(tolerance)
             except Exception: pass
-        
+
+        if t_nic_ip is not None:
+            try: self.set_t_nic_ip(t_nic_ip)
+            except Exception: pass
+
+        if r_nic_ip is not None:
+            try: self.set_r_nic_ip(r_nic_ip)
+            except Exception: pass
+
+        if target_port is not None:
+            try: self.set_target_port(target_port)
+            except Exception: pass
+
         self.save()
-    
+
     # to GET use config.var_name as a direct reference
 
     # SET methods w/ validation
@@ -169,9 +193,21 @@ class Config:
             try:
                 with open(path, 'r') as f:
                     data = json.load(f)
-                for key in data.keys():
-                    if not key in ["mode", "ch", "sr", "buf", "gain", "port", "nic_ip", "target_ip", "in_dev", "out_dev", "tolerance"]:
-                        raise ValueError(f"Invalid path: {path} - file exists but contains keys this program can't generate, possibly config file for another program?")
+                top_keys = set(data.keys())
+                allowed_top = {"mode", "transmitter-config", "receiver-config"}
+                unknown = top_keys - allowed_top
+                if unknown:
+                    raise ValueError(f"Invalid path: {path} — unrecognised top-level keys {unknown}, possibly config for another program?")
+                allowed_tx = {"nic_ip", "target_ip", "target_port", "in_dev"}
+                allowed_rx = {"nic_ip", "port", "ch", "sr", "buf", "tolerance", "gain", "out_dev"}
+                if "transmitter-config" in data:
+                    unknown_tx = set(data["transmitter-config"].keys()) - allowed_tx
+                    if unknown_tx:
+                        raise ValueError(f"Invalid path: {path} — unrecognised transmitter-config keys {unknown_tx}")
+                if "receiver-config" in data:
+                    unknown_rx = set(data["receiver-config"].keys()) - allowed_rx
+                    if unknown_rx:
+                        raise ValueError(f"Invalid path: {path} — unrecognised receiver-config keys {unknown_rx}")
             except FileNotFoundError:
                 pass
             self.path = path
@@ -200,6 +236,11 @@ class Config:
         if gain <= 0.0 or gain > 8.0: raise ValueError(f"Invalid gain: {str(gain)} - must be greater than 0.0 and less than (or equal to) 8.0")
         else: self.gain = gain
 
+    def set_target_port(self, port: int):
+        if port < 1024 or port > 65535:
+            raise ValueError(f"Invalid target_port: {port} — must be 1024–65535")
+        self.target_port = port
+
     def set_port(self, port:int):
         if port < 1024 or port > 65535: raise ValueError(f"Invalid port: {str(port)} - must be greater than or equal to 1024 and less than or equal to 65535")
         elif port_in_use(port): raise ValueError(f"Invalid port: {str(port)} - port in use by another program on this host")
@@ -218,84 +259,74 @@ class Config:
         if out_dev is not None and not isinstance(out_dev, str): # same again
             raise ValueError(f"Invalid output device: {out_dev} — must be a string name or None for default")
         self.out_dev = out_dev
-    
-    def set_nic_ip(self, nic_ip: str):
-        if not isinstance(nic_ip, str):
-            raise ValueError(f"Invalid NIC IP: {nic_ip} — must be a string")
-        parts = nic_ip.split(".")
-        if nic_ip != "0.0.0.0":
-            if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
-                raise ValueError(f"Invalid NIC IP: {nic_ip} — must be a valid IPv4 address or 0.0.0.0")
-        self.nic_ip = nic_ip
+
+    def set_t_nic_ip(self, nic_ip: str):
+        self.t_nic_ip = self.check_valid_ip(nic_ip, allow_wildcard=True)
+
+    def set_r_nic_ip(self, nic_ip: str):
+        self.r_nic_ip = self.check_valid_ip(nic_ip, allow_wildcard=True)
 
     def set_target_ip(self, target_ip: str):
         if target_ip is None:
             self.target_ip = None
             return
-        if not isinstance(target_ip, str):
-            raise ValueError(f"Invalid target IP: {target_ip} — must be a string")
-        parts = target_ip.split(".")
-        if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
-            raise ValueError(f"Invalid target IP: {target_ip} — must be a valid IPv4 address")
-        self.target_ip = target_ip
-    
+        self.target_ip = self.check_valid_ip(target_ip, allow_wildcard=False)
 
-    # save/load to/from json
+    def check_valid_ip(self, ip: str, allow_wildcard: bool) -> str:
+        if not isinstance(ip, str):
+            raise ValueError(f"IP must be a string, got {type(ip)}")
+        if allow_wildcard and ip == "0.0.0.0":
+            return ip
+        parts = ip.split(".")
+        if len(parts) != 4 or not all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+            raise ValueError(f"Invalid target IP: {ip} — must be a valid IPv4 address")
+        return ip
 
     def save(self):
         to_save = {
             "mode": self.mode,
-            "ch": self.ch,
-            "sr": self.sr,
-            "buf": self.buf,
-            "gain": self.gain,
-            "port": self.port,
-            "tolerance": self.tolerance,
-            "in_dev": self.in_dev,
-            "out_dev": self.out_dev,
-            "nic_ip": self.nic_ip,
-            "target_ip": self.target_ip,
+            "transmitter-config": {
+                "nic_ip": self.t_nic_ip,
+                "target_ip": self.target_ip,
+                "target_port": self.target_port,
+                "in_dev": self.in_dev,
+            },
+            "receiver-config": {
+                "nic_ip": self.r_nic_ip,
+                "port": self.port,
+                "ch": self.ch,
+                "sr": self.sr,
+                "buf": self.buf,
+                "tolerance": self.tolerance,
+                "gain": self.gain,
+                "out_dev": self.out_dev,
+            },
         }
 
         with open(self.path, 'w') as f:
-            json.dump(to_save, f)
+            json.dump(to_save, f, indent=4)
 
     def load(self):
         with open(self.path, 'r') as f:
             data = json.load(f)
-        
-        try: self.set_mode(data.get("mode", self.mode))
-        except Exception: pass
-        
-        try: self.set_ch(data.get("ch", self.ch))
-        except Exception: pass
-        
-        try: self.set_sr(data.get("sr", self.sr))
-        except Exception: pass
 
-        try: self.set_buf(data.get("buf", self.buf))
-        except Exception: pass
+        self._try(self.set_mode, data.get("mode", self.mode))
 
-        try: self.set_gain(data.get("gain", self.gain))
-        except Exception: pass
+        tx = data.get("transmitter-config", {})
+        self._try(self.set_t_nic_ip, tx.get("nic_ip", self.t_nic_ip))
+        self._try(self.set_target_ip, tx.get("target_ip", self.target_ip))
+        self._try(self.set_target_port, tx.get("target_port", self.target_port))
+        self._try(self.set_in_dev, tx.get("in_dev", self.in_dev))
 
-        try: self.set_port(data.get("port", self.port))
-        except Exception: pass
-
-        try: self.set_tolerance(data.get("tolerance", self.tolerance))
-        except Exception: pass
-
-        try: self.set_in_dev(data.get("in_dev", self.in_dev))
-        except Exception: pass
-
-        try: self.set_out_dev(data.get("out_dev", self.out_dev))
-        except Exception: pass
-
-        try: self.set_nic_ip(data.get("nic_ip", self.nic_ip))
-        except Exception: pass
-
-        try: self.set_target_ip(data.get("target_ip", self.target_ip))
-        except Exception: pass
+        rx = data.get("receiver-config", {})
+        self._try(self.set_r_nic_ip, rx.get("nic_ip", self.r_nic_ip))
+        self._try(self.set_port, rx.get("port", self.port))
+        self._try(self.set_ch, rx.get("ch", self.ch))
+        self._try(self.set_sr, rx.get("sr", self.sr))
+        self._try(self.set_buf, rx.get("buf", self.buf))
+        self._try(self.set_tolerance, rx.get("tolerance", self.tolerance))
+        self._try(self.set_gain, rx.get("gain", self.gain))
+        self._try(self.set_out_dev, rx.get("out_dev", self.out_dev))
 
         self.save()
 
@@ -490,13 +521,13 @@ class Connection:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-        nic_ip = self.config.nic_ip if hasattr(self.config, "nic_ip") else "0.0.0.0"
+        nic_ip = self.config.t_nic_ip
         if nic_ip and nic_ip != "0.0.0.0":
             s.bind((nic_ip, 0))
 
-        s.connect((host, self.config.port))
+        s.connect((host, self.config.target_port))
         self.sock = s
-        print(f"[Connection] Connected to {host}:{self.config.port}")
+        print(f"[Connection] Connected to {host}:{self.config.target_port}")
 
         threading.Thread(target=self.reader, daemon=True).start()
 
@@ -508,7 +539,7 @@ class Connection:
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        nic_ip = self.config.nic_ip if hasattr(self.config, "nic_ip") else "0.0.0.0"
+        nic_ip = self.config.r_nic_ip
         bind_ip = nic_ip if nic_ip and nic_ip != "0.0.0.0" else ""
         self.server.bind((bind_ip, self.config.port))
         self.server.listen(1)
@@ -567,9 +598,10 @@ class Connection:
 
 
 class SettingsSync:
-    def __init__(self, config, connection, on_command=None):
+    def __init__(self, config, connection, role:str, on_command=None):
         self.config = config
         self.connection = connection
+        self.role = role
 
         self.on_command = on_command
 
@@ -579,11 +611,11 @@ class SettingsSync:
     def send_setting(self, key:str, value):
         data = {"type": "setting", "key": key, "value": value}
         self.connection.send(MSG_CONTROL, json.dumps(data).encode())
-    
+
     def send_command(self, action: str):
         data = {"type": "command", "action": action}
         self.connection.send(MSG_CONTROL, json.dumps(data).encode())
-    
+
     def send_device_list(self, kind:str):
         if kind == "input": devices = list_input_devices()
         elif kind == "output": devices = list_output_devices()
@@ -593,6 +625,7 @@ class SettingsSync:
         self.connection.send(MSG_CONTROL, json.dumps(data).encode())
 
     def send_all_settings(self):
+        # only sync receiver settings on new connection
         self.send_setting("sr", self.config.sr)
         self.send_setting("ch", self.config.ch)
         self.send_setting("buf", self.config.buf)
@@ -602,7 +635,7 @@ class SettingsSync:
         # self.send_setting("out_dev", self.config.out_dev)
 
     def handle_message(self, msg_type, payload):
-        if msg_type == MSG_CONTROL: # we only care about control messages, audio goes to other palces
+        if msg_type == MSG_CONTROL:
             data = json.loads(payload.decode())
 
             setters = {
@@ -621,6 +654,12 @@ class SettingsSync:
                         setters[data["key"]](data["value"])
                     except Exception:
                         pass
+                    # only save if it's your setting to save
+                    owns = (
+                        (self.role == "receiver" and data["key"] in Config.RECEIVER_KEYS) or
+                        (self.role == "transmitter" and data["key"] in Config.TRANSMITTER_KEYS)
+                    )
+                    if owns: self.config.save()
 
             elif data["type"] == "device_list":
                 if data["kind"] == "input":
@@ -674,8 +713,9 @@ class TransmitStream:
         self.send_thread = None
 
     def connect(self, host):
+        self.config.set_target_ip(host)
+        self.config.save()
         self.connection.connect(host, self.sync.handle_message)
-        self.sync.send_all_settings()
         self.sync.send_device_list("input")
         self.monitor.start()
 
@@ -801,13 +841,13 @@ class App:
 
     def build_transmitter(self):
         self.connection = Connection(self.config)
-        self.sync       = SettingsSync(self.config, self.connection, on_command=self.on_command)
+        self.sync       = SettingsSync(self.config, self.connection, role="transmitter", on_command=self.on_command)
         self.monitor    = DeviceMonitor(self.sync, "input")
         self.stream     = TransmitStream(self.config, self.connection, self.sync, self.monitor)
 
     def build_receiver(self):
         self.connection = Connection(self.config)
-        self.sync       = SettingsSync(self.config, self.connection, on_command=self.on_command)
+        self.sync       = SettingsSync(self.config, self.connection, role="receiver", on_command=self.on_command)
         self.monitor    = DeviceMonitor(self.sync, "output")
         self.buffer     = PlaybackBuffer(self.config)
         self.stream     = ReceiveStream(self.config, self.connection, self.sync, self.monitor, self.buffer)
@@ -853,25 +893,44 @@ class App:
             "out_dev":  self.config.set_out_dev,
             "mode":     self.config.set_mode,
             "port":     self.config.set_port,
-            "nic_ip":   self.config.set_nic_ip,
+            "r_nic_ip": self.config.set_r_nic_ip,
+            "t_nic_ip": self.config.set_t_nic_ip,
             "target_ip": self.config.set_target_ip,
+            "target_port": self.config.set_target_port,
         }
-        if key in setter:
-            try:
-                setter[key](value)
-            except Exception as e:
-                print(f"[App] Invalid value for {key}: {e}")
-                return
+        if key not in setter:
+            print(f"[App] Unknown setting: {key}")
+            return
+        try:
+            setter[key](value)
+        except Exception as e:
+            print(f"[App] Invalid value for {key}: {e}")
+            return
 
         if key == "buf" and self.stream is not None:
             if isinstance(self.stream, ReceiveStream):
                 self.stream.buffer.update_buf()
+            # buf change scaled tolerance — send updated tolerance too
             if self.sync is not None:
                 self.sync.send_setting("tolerance", self.config.tolerance)
 
-        if self.sync is not None:
+        # Persist only if this side owns the key; transmitter-local keys
+        # (target_ip, target_port, t_nic_ip, in_dev) are always saved on the
+        # transmitter, receiver keys are always saved on the receiver.
+        # mode and both nic_ips are always saved regardless.
+        always_save = {"mode", "t_nic_ip", "r_nic_ip"}
+        role = self.config.mode
+        owns = (
+            key in always_save or
+            (role == "receiver"    and key in Config.RECEIVER_KEYS) or
+            (role == "transmitter" and key in Config.TRANSMITTER_KEYS)
+        )
+        if owns:
+            self.config.save()
+
+        # sync shared (receiver) settings
+        if self.sync is not None and key in Config.RECEIVER_KEYS:
             self.sync.send_setting(key, value)
-        self.config.save()
 
     def send_command(self, action: str):
         if self.sync is not None:
