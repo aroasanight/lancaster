@@ -310,7 +310,6 @@ class Config:
         with open(self.path, 'r') as f:
             data = json.load(f)
 
-        self._try(self.set_mode, data.get("mode", self.mode))
         try: self.set_mode(data.get("mode", self.mode))
         except Exception: pass
         
