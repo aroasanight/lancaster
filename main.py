@@ -352,13 +352,18 @@ class PlaybackBuffer:
         self.queue = queue.Queue()
         self.lock = threading.Lock()
         self.pfilled = False
+        self.pop_count = 0
+        self.depth_acc = 0
+        self.WINDOW = 200
+        self.correction = None
+        self.last_frame = None
 
     def push(self, frames):
         self.queue.put(frames)
 
     def pop(self):
         silence = np.zeros((BLOCKSIZE, self.config.ch), dtype="float32")
-        
+
         with self.lock:
             if not self.pfilled:
                 queued_ms = (self.queue.qsize() * BLOCKSIZE / self.config.sr) * 1000
@@ -368,14 +373,54 @@ class PlaybackBuffer:
                 log.info(f"[Buffer] prefill complete at {queued_ms:.0f}ms")
                 self.pfilled = True
 
+        # Apply correction decided at end of last window
+        if self.correction == "skip":
+            self.correction = None
+            try:
+                self.queue.get_nowait()   # discard one frame
+                log.debug("[Buffer] drift correction: skipped frame (running hot)")
+            except queue.Empty:
+                pass
+
+        elif self.correction == "repeat" and self.last_frame is not None:
+            self.correction = None
+            log.debug("[Buffer] drift correction: repeated frame (running cold)")
+            return (self.last_frame * self.config.gain).astype(np.float32)
+
+        # Normal pop
         try:
             frames = self.queue.get_nowait()
-            return (frames * self.config.gain).astype(np.float32)
         except queue.Empty:
             log.warning("[Buffer] UNDERRUN — queue ran dry")
             with self.lock:
                 self.pfilled = False
             return silence
+
+        self.last_frame = frames.copy()
+
+        # Accumulate for rolling window
+        self.depth_acc += self.queue.qsize()
+        self.pop_count += 1
+
+        if self.pop_count >= self.WINDOW:
+            avg_ms = (self.depth_acc / self.WINDOW * BLOCKSIZE / self.config.sr) * 1000
+            target = self.config.buf
+            error  = avg_ms - target
+
+            tolerance_ms = self.config.buf * 0.08  # ±8% of buffer size
+
+            log.debug(f"[Buffer] drift check: avg={avg_ms:.0f}ms target={target}ms error={error:+.0f}ms tolerance=±{tolerance_ms:.0f}ms")
+
+
+            if error > tolerance_ms:
+                self.correction = "skip"
+            elif error < -tolerance_ms:
+                self.correction = "repeat"
+
+            self.pop_count = 0
+            self.depth_acc = 0
+
+        return (frames * self.config.gain).astype(np.float32)
 
     def update_buf(self):
         target  = self.config.buf
@@ -397,11 +442,18 @@ class PlaybackBuffer:
 
         with self.lock:
             self.pfilled = True
+            self.pop_count = 0
+            self.depth_acc = 0
+            self.correction = None
 
     def reset(self):
         with self.lock:
             self.queue = queue.Queue()
             self.pfilled = False
+            self.pop_count = 0
+            self.depth_acc = 0
+            self.correction = None
+            self.last_frame = None
 
 
 
@@ -413,6 +465,7 @@ class Connection:
         self.running = False
         self.send_lock = threading.Lock()
         self.on_message = None
+        self.on_connect = None
 
     def connect(self, host: str, on_message):
         self.on_message = on_message
@@ -511,6 +564,10 @@ class SettingsSync:
         data = {"type": "setting", "key": key, "value": value}
         self.connection.send(MSG_CONTROL, json.dumps(data).encode())
     
+    def send_command(self, action: str):
+        data = {"type": "command", "action": action}
+        self.connection.send(MSG_CONTROL, json.dumps(data).encode())
+    
     def send_device_list(self, kind:str):
         if kind == "input": devices = list_input_devices()
         elif kind == "output": devices = list_output_devices()
@@ -595,6 +652,8 @@ class TransmitStream:
 
         self.audio_in = None
         self.running = False
+        self.send_queue = queue.Queue()
+        self.send_thread = None
 
     def connect(self, host):
         self.connection.connect(host, self.sync.handle_message)
@@ -606,14 +665,29 @@ class TransmitStream:
         self.monitor.stop()
         time.sleep(0.1)
         self.running = True
+
+        self.send_thread = threading.Thread(target=self.sender_loop, daemon=True)
+        self.send_thread.start()
+
         self.audio_in = AudioInput(self.config)
         self.audio_in.start(self.on_audio)
 
+    def sender_loop(self):
+        while self.running:
+            try:
+                payload = self.send_queue.get(timeout=0.2)
+                self.connection.send(MSG_AUDIO, payload)
+            except queue.Empty:
+                continue
+
     def on_audio(self, indata, frames, time_info, status):
         if self.running:
-            self.connection.send(MSG_AUDIO, indata.tobytes())
+            self.send_queue.put(indata.tobytes())
 
     def stop_stream(self):
+        if self.send_thread is not None:
+            self.send_thread.join(timeout=1.0)
+            self.send_thread = None
         if self.audio_in is not None:
             self.audio_in.stop()
             self.audio_in = None
