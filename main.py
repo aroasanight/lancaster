@@ -744,6 +744,11 @@ class App:
             except Exception as e:
                 print(f"[App] Invalid value for {key}: {e}")
                 return
+
+        if key == "buf" and self.stream is not None:
+            if isinstance(self.stream, ReceiveStream):
+                self.stream.buffer.update_buf()
+
         if self.sync is not None:
             self.sync.send_setting(key, value)
         self.config.save()
