@@ -83,7 +83,7 @@ def list_output_devices() -> list:
 
 
 class Config:
-    def __init__(self, path="config.json", mode=None, ch=None, sr=None, buf=None, gain=None, port=None, in_dev=None, out_dev=None, nic_ip=None, target_ip=None):
+    def __init__(self, path="config.json", mode=None, ch=None, sr=None, buf=None, gain=None, port=None, in_dev=None, out_dev=None, nic_ip=None, target_ip=None, tolerance=None):
         self.path   = path
         self.mode   = "transmitter"
         self.ch     = 2
@@ -91,6 +91,7 @@ class Config:
         self.buf    = 500
         self.gain   = 1.0
         self.port   = 5005
+        self.tolerance = 100
         self.in_dev = None  # none will use system defaults
         self.out_dev = None
         self.nic_ip = "0.0.0.0" # will use system default
@@ -151,6 +152,10 @@ class Config:
         if target_ip is not None:
             try: self.set_target_ip(target_ip)
             except Exception: pass
+
+        if tolerance is not None:
+            try: self.set_tolerance(tolerance)
+            except Exception: pass
         
         self.save()
     
@@ -165,7 +170,7 @@ class Config:
                 with open(path, 'r') as f:
                     data = json.load(f)
                 for key in data.keys():
-                    if not key in ["mode", "ch", "sr", "buf", "gain", "port", "nic_ip", "target_ip", "in_dev", "out_dev"]:
+                    if not key in ["mode", "ch", "sr", "buf", "gain", "port", "nic_ip", "target_ip", "in_dev", "out_dev", "tolerance"]:
                         raise ValueError(f"Invalid path: {path} - file exists but contains keys this program can't generate, possibly config file for another program?")
             except FileNotFoundError:
                 pass
@@ -186,7 +191,10 @@ class Config:
 
     def set_buf(self, buf:int):
         if buf < 0: raise ValueError(f"Invalid buffer size: {str(buf)} - must be greater than or equal to zero")
-        else: self.buf = buf
+        if self.buf > 0:
+            ratio = buf / self.buf
+            self.tolerance = max(1, round(self.tolerance * ratio))
+        self.buf = buf
 
     def set_gain(self, gain:float):
         if gain <= 0.0 or gain > 8.0: raise ValueError(f"Invalid gain: {str(gain)} - must be greater than 0.0 and less than (or equal to) 8.0")
@@ -196,6 +204,10 @@ class Config:
         if port < 1024 or port > 65535: raise ValueError(f"Invalid port: {str(port)} - must be greater than or equal to 1024 and less than or equal to 65535")
         elif port_in_use(port): raise ValueError(f"Invalid port: {str(port)} - port in use by another program on this host")
         else: self.port = port
+
+    def set_tolerance(self, tolerance: int):
+        if tolerance < 1: raise ValueError(f"Invalid tolerance: {str(tolerance)} - must be at least 1ms")
+        else: self.tolerance = tolerance
 
     def set_in_dev(self, in_dev: str):
         if in_dev is not None and not isinstance(in_dev, str): # allow missing devices to keep config, check should be done on transmit/recieve start
@@ -238,6 +250,7 @@ class Config:
             "buf": self.buf,
             "gain": self.gain,
             "port": self.port,
+            "tolerance": self.tolerance,
             "in_dev": self.in_dev,
             "out_dev": self.out_dev,
             "nic_ip": self.nic_ip,
@@ -267,6 +280,9 @@ class Config:
         except Exception: pass
 
         try: self.set_port(data.get("port", self.port))
+        except Exception: pass
+
+        try: self.set_tolerance(data.get("tolerance", self.tolerance))
         except Exception: pass
 
         try: self.set_in_dev(data.get("in_dev", self.in_dev))
@@ -407,7 +423,7 @@ class PlaybackBuffer:
             target = self.config.buf
             error  = avg_ms - target
 
-            tolerance_ms = min(max(self.config.buf * 0.08, 80), 4000)  # ±8% of buffer size
+            tolerance_ms = self.config.tolerance
 
             log.debug(f"[Buffer] drift check: avg={avg_ms:.0f}ms target={target}ms error={error:+.0f}ms tolerance=±{tolerance_ms:.0f}ms")
 
@@ -581,6 +597,7 @@ class SettingsSync:
         self.send_setting("ch", self.config.ch)
         self.send_setting("buf", self.config.buf)
         self.send_setting("gain", self.config.gain)
+        self.send_setting("tolerance", self.config.tolerance)
         # self.send_setting("in_dev", self.config.in_dev)
         # self.send_setting("out_dev", self.config.out_dev)
 
@@ -593,6 +610,7 @@ class SettingsSync:
                 "ch":      self.config.set_ch,
                 "buf":     self.config.set_buf,
                 "gain":    self.config.set_gain,
+                "tolerance": self.config.set_tolerance,
                 "in_dev":  self.config.set_in_dev,
                 "out_dev": self.config.set_out_dev,
             }
@@ -830,6 +848,7 @@ class App:
             "ch":       self.config.set_ch,
             "buf":      self.config.set_buf,
             "gain":     self.config.set_gain,
+            "tolerance": self.config.set_tolerance,
             "in_dev":   self.config.set_in_dev,
             "out_dev":  self.config.set_out_dev,
             "mode":     self.config.set_mode,
@@ -847,6 +866,8 @@ class App:
         if key == "buf" and self.stream is not None:
             if isinstance(self.stream, ReceiveStream):
                 self.stream.buffer.update_buf()
+            if self.sync is not None:
+                self.sync.send_setting("tolerance", self.config.tolerance)
 
         if self.sync is not None:
             self.sync.send_setting(key, value)
