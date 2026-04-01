@@ -649,7 +649,10 @@ class ReceiveStream:
             frames = frames.reshape(-1, self.config.ch)
             self.buffer.push(frames)
         elif msg_type == MSG_CONTROL:
+            old_buf = self.config.buf
             self.sync.handle_message(msg_type, payload)
+            if self.config.buf != old_buf:
+                self.buffer.update_buf()
 
     def listen(self):
         self.monitor.start()
