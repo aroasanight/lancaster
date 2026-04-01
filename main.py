@@ -589,6 +589,8 @@ class TransmitStream:
         self.monitor.start()
     
     def start_stream(self):
+        self.monitor.stop()
+        time.sleep(0.1)
         self.running = True
         self.audio_in = AudioInput(self.config)
         self.audio_in.start(self.on_audio)
@@ -602,6 +604,7 @@ class TransmitStream:
             self.audio_in.stop()
             self.audio_in = None
         self.running = False
+        self.monitor.start()
 
     def disconnect(self):
         
@@ -643,6 +646,7 @@ class ReceiveStream:
         self.sync.send_device_list("output")
 
     def start_stream(self):
+        self.monitor.stop()
         self.running   = True
         self.audio_out = AudioOutput(self.config)
 
@@ -658,6 +662,7 @@ class ReceiveStream:
             self.audio_out = None
         self.buffer.reset()
         self.running = False
+        self.monitor.start()
 
     def disconnect(self):
         if self.audio_out is not None:
