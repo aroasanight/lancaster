@@ -407,7 +407,7 @@ class PlaybackBuffer:
             target = self.config.buf
             error  = avg_ms - target
 
-            tolerance_ms = max(min(self.config.buf * 0.08, 80), 4000)  # ±8% of buffer size
+            tolerance_ms = min(max(self.config.buf * 0.08, 80), 4000)  # ±8% of buffer size
 
             log.debug(f"[Buffer] drift check: avg={avg_ms:.0f}ms target={target}ms error={error:+.0f}ms tolerance=±{tolerance_ms:.0f}ms")
 
