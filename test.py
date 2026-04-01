@@ -1851,5 +1851,879 @@ class TestDeviceMonitor(unittest.TestCase):
         self.assertEqual(monitor.last_devices, ["MacBook Pro Microphone", "UMC404HD 192k"])
 
 
+class TestTransmitStream(unittest.TestCase):
+
+    class FakeConnection:
+        def __init__(self):
+            self.sent = []
+            self.connected_to = None
+            self.disconnected = False
+        def connect(self, host, on_message):
+            self.connected_to = host
+        def send(self, msg_type, payload):
+            self.sent.append((msg_type, payload))
+        def disconnect(self):
+            self.disconnected = True
+
+    class FakeSync:
+        def __init__(self):
+            self.device_lists_sent = []
+            self.messages_handled = []
+        def send_device_list(self, kind):
+            self.device_lists_sent.append(kind)
+        def handle_message(self, msg_type, payload):
+            self.messages_handled.append((msg_type, payload))
+
+    class FakeMonitor:
+        def __init__(self):
+            self.started = False
+            self.stopped = False
+        def start(self):
+            self.started = True
+        def stop(self):
+            self.stopped = True
+
+    def setUp(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+        self.config = Config(path="test_config.json")
+        self.connection = self.FakeConnection()
+        self.sync = self.FakeSync()
+        self.monitor = self.FakeMonitor()
+        self.stream = TransmitStream(self.config, self.connection, self.sync, self.monitor)
+
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+
+
+
+    # init
+
+    def test_initial_state_not_running(self):
+        self.assertFalse(self.stream.running)
+
+    def test_initial_audio_in_is_none(self):
+        self.assertIsNone(self.stream.audio_in)
+
+    def test_initial_send_thread_is_none(self):
+        self.assertIsNone(self.stream.send_thread)
+
+    def test_config_reference_stored(self):
+        self.assertIs(self.stream.config, self.config)
+
+    def test_connection_reference_stored(self):
+        self.assertIs(self.stream.connection, self.connection)
+
+    def test_sync_reference_stored(self):
+        self.assertIs(self.stream.sync, self.sync)
+
+    def test_monitor_reference_stored(self):
+        self.assertIs(self.stream.monitor, self.monitor)
+
+
+
+    # connect
+
+    def test_connect_calls_connection_connect(self):
+        self.stream.connect("192.168.1.5")
+        self.assertEqual(self.connection.connected_to, "192.168.1.5")
+
+    def test_connect_updates_target_ip_in_config(self):
+        self.stream.connect("192.168.1.5")
+        self.assertEqual(self.config.target_ip, "192.168.1.5")
+
+    def test_connect_sends_input_device_list(self):
+        self.stream.connect("192.168.1.5")
+        self.assertIn("input", self.sync.device_lists_sent)
+
+    def test_connect_starts_monitor(self):
+        self.stream.connect("192.168.1.5")
+        self.assertTrue(self.monitor.started)
+
+
+
+    # start_stream
+
+    @patch("main.AudioInput")
+    def test_start_stream_sets_running(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.assertTrue(self.stream.running)
+        self.stream.stop_stream()
+
+    @patch("main.AudioInput")
+    def test_start_stream_stops_monitor(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.assertTrue(self.monitor.stopped)
+        self.stream.stop_stream()
+
+    @patch("main.AudioInput")
+    def test_start_stream_creates_send_thread(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.assertIsNotNone(self.stream.send_thread)
+        self.stream.stop_stream()
+
+    @patch("main.AudioInput")
+    def test_start_stream_creates_audio_input(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.assertIsNotNone(self.stream.audio_in)
+        self.stream.stop_stream()
+
+    @patch("main.AudioInput")
+    def test_start_stream_calls_audio_input_start(self, mock_audio_input_class):
+        mock_ai = MagicMock()
+        mock_audio_input_class.return_value = mock_ai
+        self.stream.start_stream()
+        mock_ai.start.assert_called_once()
+        self.stream.stop_stream()
+
+
+
+    # on_audio
+
+    @patch("main.AudioInput")
+    def test_on_audio_enqueues_bytes_when_running(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        fake = np.ones((BLOCKSIZE, self.config.ch), dtype="float32")
+        self.stream.on_audio(fake, BLOCKSIZE, None, None)
+        self.assertEqual(self.stream.send_queue.qsize(), 1)
+        self.stream.stop_stream()
+
+    def test_on_audio_does_not_enqueue_when_not_running(self):
+        fake = np.ones((BLOCKSIZE, self.config.ch), dtype="float32")
+        self.stream.on_audio(fake, BLOCKSIZE, None, None)
+        self.assertEqual(self.stream.send_queue.qsize(), 0)
+
+    @patch("main.AudioInput")
+    def test_on_audio_enqueues_raw_bytes(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        fake = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.5
+        self.stream.on_audio(fake, BLOCKSIZE, None, None)
+        payload = self.stream.send_queue.get_nowait()
+        self.assertEqual(payload, fake.tobytes())
+        self.stream.stop_stream()
+
+
+
+    # sender_loop — audio frames go into connection
+
+    @patch("main.AudioInput")
+    def test_sender_loop_forwards_payload_to_connection(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        fake = np.ones((BLOCKSIZE, self.config.ch), dtype="float32")
+        self.stream.on_audio(fake, BLOCKSIZE, None, None)
+        time.sleep(0.3)  # time for sender_loop
+        self.assertEqual(len(self.connection.sent), 1)
+        self.assertEqual(self.connection.sent[0][0], MSG_AUDIO)
+        self.stream.stop_stream()
+
+    @patch("main.AudioInput")
+    def test_sender_loop_forwards_correct_bytes(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        fake = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.7
+        self.stream.on_audio(fake, BLOCKSIZE, None, None)
+        time.sleep(0.3)
+        self.assertEqual(self.connection.sent[0][1], fake.tobytes())
+        self.stream.stop_stream()
+
+
+
+    # stop_stream
+
+    @patch("main.AudioInput")
+    def test_stop_stream_sets_running_false(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        self.assertFalse(self.stream.running)
+
+    @patch("main.AudioInput")
+    def test_stop_stream_clears_send_thread(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        self.assertIsNone(self.stream.send_thread)
+
+    @patch("main.AudioInput")
+    def test_stop_stream_clears_audio_in(self, mock_audio_input_class):
+        mock_ai = MagicMock()
+        mock_audio_input_class.return_value = mock_ai
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        self.assertIsNone(self.stream.audio_in)
+
+    @patch("main.AudioInput")
+    def test_stop_stream_calls_audio_input_stop(self, mock_audio_input_class):
+        mock_ai = MagicMock()
+        mock_audio_input_class.return_value = mock_ai
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        mock_ai.stop.assert_called_once()
+
+    @patch("main.AudioInput")
+    def test_stop_stream_restarts_monitor(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.monitor.started = False
+        self.stream.stop_stream()
+        self.assertTrue(self.monitor.started)
+
+
+
+    # disconnect
+
+    @patch("main.AudioInput")
+    def test_disconnect_calls_connection_disconnect(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.stream.disconnect()
+        self.assertTrue(self.connection.disconnected)
+
+    @patch("main.AudioInput")
+    def test_disconnect_stops_stream_if_running(self, mock_audio_input_class):
+        mock_ai = MagicMock()
+        mock_audio_input_class.return_value = mock_ai
+        self.stream.start_stream()
+        self.stream.disconnect()
+        self.assertFalse(self.stream.running)
+
+    def test_disconnect_without_stream_does_not_crash(self):
+        self.stream.disconnect()
+        self.assertTrue(self.connection.disconnected)
+
+    @patch("main.AudioInput")
+    def test_disconnect_stops_monitor(self, mock_audio_input_class):
+        mock_audio_input_class.return_value = MagicMock()
+        self.stream.connect("192.168.1.5")
+        self.stream.disconnect()
+        self.assertTrue(self.monitor.stopped)
+
+
+
+class TestReceiveStream(unittest.TestCase):
+
+    class FakeConnection:
+        def __init__(self):
+            self.listening = False
+            self.disconnected = False
+            self._on_message = None
+            self._on_connect = None
+        def listen(self, on_message, on_connect=None):
+            self.listening = True
+            self._on_message = on_message
+            self._on_connect = on_connect
+        def disconnect(self):
+            self.disconnected = True
+        def send(self, msg_type, payload):
+            pass
+
+    class FakeSync:
+        def __init__(self):
+            self.all_settings_sent = False
+            self.device_lists_sent = []
+            self.messages_handled = []
+        def send_all_settings(self):
+            self.all_settings_sent = True
+        def send_device_list(self, kind):
+            self.device_lists_sent.append(kind)
+        def handle_message(self, msg_type, payload):
+            self.messages_handled.append((msg_type, payload))
+
+    class FakeMonitor:
+        def __init__(self):
+            self.started = False
+            self.stopped = False
+        def start(self):
+            self.started = True
+        def stop(self):
+            self.stopped = True
+
+    def setUp(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+        self.config = Config(path="test_config.json")
+        self.connection = self.FakeConnection()
+        self.sync = self.FakeSync()
+        self.monitor = self.FakeMonitor()
+        self.buffer = PlaybackBuffer(self.config)
+        self.stream = ReceiveStream(self.config, self.connection, self.sync, self.monitor, self.buffer)
+
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+
+
+
+    # init
+
+    def test_initial_state_not_running(self):
+        self.assertFalse(self.stream.running)
+
+    def test_initial_audio_out_is_none(self):
+        self.assertIsNone(self.stream.audio_out)
+
+    def test_config_reference_stored(self):
+        self.assertIs(self.stream.config, self.config)
+
+    def test_buffer_reference_stored(self):
+        self.assertIs(self.stream.buffer, self.buffer)
+
+
+
+    # listen
+
+    def test_listen_starts_monitor(self):
+        self.stream.listen()
+        self.assertTrue(self.monitor.started)
+
+    def test_listen_calls_connection_listen(self):
+        self.stream.listen()
+        self.assertTrue(self.connection.listening)
+
+
+
+    # on_connected
+
+    def test_on_connected_sends_all_settings(self):
+        self.stream.on_connected()
+        self.assertTrue(self.sync.all_settings_sent)
+
+    def test_on_connected_sends_output_device_list(self):
+        self.stream.on_connected()
+        self.assertIn("output", self.sync.device_lists_sent)
+
+    def test_listen_registers_on_connect_callback(self):
+        self.stream.listen()
+        self.connection._on_connect()
+        self.assertTrue(self.sync.all_settings_sent)
+
+
+
+    # on_message — audio frames
+
+    def test_on_message_audio_pushes_to_buffer(self):
+        frames = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.5
+        payload = frames.tobytes()
+        self.stream.on_message(MSG_AUDIO, payload)
+        self.assertEqual(self.buffer.queue.qsize(), 1)
+
+    def test_on_message_audio_pushes_correct_shape(self):
+        frames = np.ones((BLOCKSIZE, self.config.ch), dtype="float32") * 0.3
+        self.stream.on_message(MSG_AUDIO, frames.tobytes())
+        popped = self.buffer.queue.get_nowait()
+        self.assertEqual(popped.shape, (BLOCKSIZE, self.config.ch))
+
+    def test_on_message_audio_frame_count_not_divisible_by_channels_does_not_push(self):
+        bad_payload = b"\x00" * (3 * 4)  # 3 float32 samples — not divisible by ch=2
+        self.stream.on_message(MSG_AUDIO, bad_payload)
+        self.assertEqual(self.buffer.queue.qsize(), 0)
+
+    def test_on_message_ignores_unknown_type(self):
+        self.stream.on_message(0xFF, b"garbage")
+        self.assertEqual(self.buffer.queue.qsize(), 0)
+
+
+
+    # on_message — control frames
+
+    def test_on_message_control_delegates_to_sync(self):
+        msg = json.dumps({"type": "setting", "key": "gain", "value": 2.0}).encode()
+        self.stream.on_message(MSG_CONTROL, msg)
+        self.assertEqual(len(self.sync.messages_handled), 1)
+        self.assertEqual(self.sync.messages_handled[0][0], MSG_CONTROL)
+
+    def test_on_message_control_buf_change_calls_update_buf(self):
+        old_buf = self.config.buf
+
+        class BufChangingSync:
+            def __init__(self, config):
+                self.config = config
+            def handle_message(self, msg_type, payload):
+                self.config.buf = old_buf + 100  # buffer change
+
+        self.stream.sync = BufChangingSync(self.config)
+        called = []
+        self.buffer.update_buf = lambda: called.append(True)
+        msg = json.dumps({"type": "setting", "key": "buf", "value": old_buf + 100}).encode()
+        self.stream.on_message(MSG_CONTROL, msg)
+        self.assertEqual(len(called), 1)
+
+    def test_on_message_control_no_buf_change_does_not_call_update_buf(self):
+        called = []
+        self.buffer.update_buf = lambda: called.append(True)
+        msg = json.dumps({"type": "setting", "key": "gain", "value": 2.0}).encode()
+        self.stream.on_message(MSG_CONTROL, msg)
+        self.assertEqual(len(called), 0)
+
+
+
+    # start_stream
+
+    @patch("main.AudioOutput")
+    def test_start_stream_sets_running(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.assertTrue(self.stream.running)
+        self.stream.stop_stream()
+
+    @patch("main.AudioOutput")
+    def test_start_stream_stops_monitor(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.assertTrue(self.monitor.stopped)
+        self.stream.stop_stream()
+
+    @patch("main.AudioOutput")
+    def test_start_stream_creates_audio_output(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.assertIsNotNone(self.stream.audio_out)
+        self.stream.stop_stream()
+
+    @patch("main.AudioOutput")
+    def test_start_stream_calls_audio_output_start(self, mock_audio_output_class):
+        mock_ao = MagicMock()
+        mock_audio_output_class.return_value = mock_ao
+        self.stream.start_stream()
+        mock_ao.start.assert_called_once()
+        self.stream.stop_stream()
+
+
+
+    # stop_stream
+
+    @patch("main.AudioOutput")
+    def test_stop_stream_sets_running_false(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        self.assertFalse(self.stream.running)
+
+    @patch("main.AudioOutput")
+    def test_stop_stream_clears_audio_out(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        self.assertIsNone(self.stream.audio_out)
+
+    @patch("main.AudioOutput")
+    def test_stop_stream_calls_audio_output_stop(self, mock_audio_output_class):
+        mock_ao = MagicMock()
+        mock_audio_output_class.return_value = mock_ao
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        mock_ao.stop.assert_called_once()
+
+    @patch("main.AudioOutput")
+    def test_stop_stream_resets_buffer(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.buffer.push(np.ones((BLOCKSIZE, self.config.ch), dtype="float32"))
+        self.stream.start_stream()
+        self.stream.stop_stream()
+        self.assertEqual(self.buffer.queue.qsize(), 0)
+
+    @patch("main.AudioOutput")
+    def test_stop_stream_restarts_monitor(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.monitor.started = False
+        self.stream.stop_stream()
+        self.assertTrue(self.monitor.started)
+
+
+
+    # disconnect
+
+    @patch("main.AudioOutput")
+    def test_disconnect_calls_connection_disconnect(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.stream.disconnect()
+        self.assertTrue(self.connection.disconnected)
+
+    @patch("main.AudioOutput")
+    def test_disconnect_stops_stream_if_running(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.start_stream()
+        self.stream.disconnect()
+        self.assertFalse(self.stream.running)
+
+    def test_disconnect_without_stream_does_not_crash(self):
+        self.stream.disconnect()
+        self.assertTrue(self.connection.disconnected)
+
+    @patch("main.AudioOutput")
+    def test_disconnect_stops_monitor(self, mock_audio_output_class):
+        mock_audio_output_class.return_value = MagicMock()
+        self.stream.listen()
+        self.stream.disconnect()
+        self.assertTrue(self.monitor.stopped)
+
+
+
+class TestApp(unittest.TestCase):
+
+    class FakeStream:
+        def __init__(self):
+            self.stream_started = False
+            self.stream_stopped = False
+            self.disconnected = False
+        def start_stream(self):
+            self.stream_started = True
+        def stop_stream(self):
+            self.stream_stopped = True
+        def disconnect(self):
+            self.disconnected = True
+        def connect(self, host):
+            pass
+        def listen(self):
+            pass
+
+    class FakeReceiveStream(FakeStream):
+        def __init__(self, buffer):
+            super().__init__()
+            self.buffer = buffer
+
+    def setUp(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+        self.config = Config(path="test_config.json")
+        self.app = App(self.config)
+
+    def tearDown(self):
+        if os.path.exists("test_config.json"):
+            os.remove("test_config.json")
+
+
+
+    # init
+
+    def test_initial_stream_is_none(self):
+        self.assertIsNone(self.app.stream)
+
+    def test_initial_connection_is_none(self):
+        self.assertIsNone(self.app.connection)
+
+    def test_initial_sync_is_none(self):
+        self.assertIsNone(self.app.sync)
+
+    def test_initial_monitor_is_none(self):
+        self.assertIsNone(self.app.monitor)
+
+    def test_initial_buffer_is_none(self):
+        self.assertIsNone(self.app.buffer)
+
+    def test_config_reference_stored(self):
+        self.assertIs(self.app.config, self.config)
+
+
+
+    # build_transmitter
+
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_transmitter_creates_connection(self, mock_conn, mock_sync, mock_monitor):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        self.app.build_transmitter()
+        self.assertIsNotNone(self.app.connection)
+
+    @patch("main.TransmitStream")
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_transmitter_creates_stream(self, mock_conn, mock_sync, mock_monitor, mock_ts):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        mock_ts.return_value = MagicMock()
+        self.app.build_transmitter()
+        self.assertIsNotNone(self.app.stream)
+
+    @patch("main.TransmitStream")
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_transmitter_creates_sync_with_transmitter_role(self, mock_conn, mock_sync, mock_monitor, mock_ts):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        mock_ts.return_value = MagicMock()
+        self.app.build_transmitter()
+        _, kwargs = mock_sync.call_args
+        self.assertEqual(kwargs.get("role"), "transmitter")
+
+    @patch("main.TransmitStream")
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_transmitter_monitor_watches_input(self, mock_conn, mock_sync, mock_monitor, mock_ts):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        mock_ts.return_value = MagicMock()
+        self.app.build_transmitter()
+        args, _ = mock_monitor.call_args
+        self.assertEqual(args[1], "input")
+
+
+
+    # build_receiver
+
+    @patch("main.ReceiveStream")
+    @patch("main.PlaybackBuffer")
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_receiver_creates_buffer(self, mock_conn, mock_sync, mock_monitor, mock_buf, mock_rs):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        mock_buf.return_value = MagicMock()
+        mock_rs.return_value = MagicMock()
+        self.app.build_receiver()
+        self.assertIsNotNone(self.app.buffer)
+
+    @patch("main.ReceiveStream")
+    @patch("main.PlaybackBuffer")
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_receiver_creates_stream(self, mock_conn, mock_sync, mock_monitor, mock_buf, mock_rs):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        mock_buf.return_value = MagicMock()
+        mock_rs.return_value = MagicMock()
+        self.app.build_receiver()
+        self.assertIsNotNone(self.app.stream)
+
+    @patch("main.ReceiveStream")
+    @patch("main.PlaybackBuffer")
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_receiver_creates_sync_with_receiver_role(self, mock_conn, mock_sync, mock_monitor, mock_buf, mock_rs):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        mock_buf.return_value = MagicMock()
+        mock_rs.return_value = MagicMock()
+        self.app.build_receiver()
+        _, kwargs = mock_sync.call_args
+        self.assertEqual(kwargs.get("role"), "receiver")
+
+    @patch("main.ReceiveStream")
+    @patch("main.PlaybackBuffer")
+    @patch("main.DeviceMonitor")
+    @patch("main.SettingsSync")
+    @patch("main.Connection")
+    def test_build_receiver_monitor_watches_output(self, mock_conn, mock_sync, mock_monitor, mock_buf, mock_rs):
+        mock_conn.return_value = MagicMock()
+        mock_sync.return_value = MagicMock()
+        mock_monitor.return_value = MagicMock()
+        mock_buf.return_value = MagicMock()
+        mock_rs.return_value = MagicMock()
+        self.app.build_receiver()
+        args, _ = mock_monitor.call_args
+        self.assertEqual(args[1], "output")
+
+
+
+    # start_stream / stop_stream
+
+    def test_start_stream_without_pair_raises(self):
+        with self.assertRaises(RuntimeError):
+            self.app.start_stream()
+
+    def test_stop_stream_without_pair_does_not_crash(self):
+        self.app.stop_stream()
+
+    def test_start_stream_delegates_to_stream(self):
+        self.app.stream = self.FakeStream()
+        self.app.start_stream()
+        self.assertTrue(self.app.stream.stream_started)
+
+    def test_stop_stream_delegates_to_stream(self):
+        self.app.stream = self.FakeStream()
+        self.app.stop_stream()
+        self.assertTrue(self.app.stream.stream_stopped)
+
+
+
+    # on_command
+
+    def test_on_command_start_calls_start_stream(self):
+        self.app.stream = self.FakeStream()
+        self.app.on_command("start")
+        self.assertTrue(self.app.stream.stream_started)
+
+    def test_on_command_stop_calls_stop_stream(self):
+        self.app.stream = self.FakeStream()
+        self.app.on_command("stop")
+        self.assertTrue(self.app.stream.stream_stopped)
+
+    def test_on_command_unknown_does_not_crash(self):
+        self.app.stream = self.FakeStream()
+        self.app.on_command("according to all known laws of aviation")
+
+
+
+    # unpair
+
+    def test_unpair_calls_stream_disconnect(self):
+        fake = self.FakeStream()
+        self.app.stream = fake
+        self.app.unpair()
+        self.assertTrue(fake.disconnected)
+
+    def test_unpair_clears_stream(self):
+        self.app.stream = self.FakeStream()
+        self.app.unpair()
+        self.assertIsNone(self.app.stream)
+
+    def test_unpair_clears_connection(self):
+        self.app.stream = self.FakeStream()
+        self.app.connection = MagicMock()
+        self.app.unpair()
+        self.assertIsNone(self.app.connection)
+
+    def test_unpair_clears_sync(self):
+        self.app.stream = self.FakeStream()
+        self.app.sync = MagicMock()
+        self.app.unpair()
+        self.assertIsNone(self.app.sync)
+
+    def test_unpair_clears_monitor(self):
+        self.app.stream = self.FakeStream()
+        self.app.monitor = MagicMock()
+        self.app.unpair()
+        self.assertIsNone(self.app.monitor)
+
+    def test_unpair_clears_buffer(self):
+        self.app.stream = self.FakeStream()
+        self.app.buffer = MagicMock()
+        self.app.unpair()
+        self.assertIsNone(self.app.buffer)
+
+    def test_unpair_without_pair_does_not_crash(self):
+        self.app.unpair()   # stream is None — should be safe
+
+
+
+    # push_setting
+
+    def test_push_setting_applies_valid_sr(self):
+        self.app.push_setting("sr", 44100)
+        self.assertEqual(self.config.sr, 44100)
+
+    def test_push_setting_applies_valid_ch(self):
+        self.app.push_setting("ch", 1)
+        self.assertEqual(self.config.ch, 1)
+
+    def test_push_setting_applies_valid_gain(self):
+        self.app.push_setting("gain", 2.0)
+        self.assertEqual(self.config.gain, 2.0)
+
+    def test_push_setting_applies_valid_mode(self):
+        self.app.push_setting("mode", "receiver")
+        self.assertEqual(self.config.mode, "receiver")
+
+    def test_push_setting_unknown_key_does_not_crash(self):
+        self.app.push_setting("banana", 99)   # should print warning only
+
+    def test_push_setting_invalid_value_does_not_crash(self):
+        self.app.push_setting("sr", 99999)   # invalid sr — should be caught
+        self.assertEqual(self.config.sr, 48000)
+
+    def test_push_setting_saves_config_for_receiver_owned_key(self):
+        self.config.set_mode("receiver")
+        self.app.push_setting("gain", 3.0)
+        c2 = Config(path="test_config.json")
+        self.assertEqual(c2.gain, 3.0)
+
+    def test_push_setting_does_not_save_for_non_owned_key(self):
+        # transmitter mode should not persist receiver-only key changes
+        self.config.set_mode("transmitter")
+        original_gain = self.config.gain
+        self.app.push_setting("gain", 3.0)
+        c2 = Config(path="test_config.json")
+        self.assertEqual(c2.gain, original_gain)
+
+    def test_push_setting_buf_calls_update_buf_on_receive_stream(self):
+        called = []
+        fake_buffer = MagicMock()
+        fake_buffer.update_buf = lambda: called.append(True)
+        fake_stream = MagicMock(spec=ReceiveStream)
+        fake_stream.buffer = fake_buffer
+        self.app.stream = fake_stream
+        self.app.sync = MagicMock()
+        self.app.push_setting("buf", 300)
+        self.assertEqual(len(called), 1)
+
+    def test_push_setting_buf_does_not_call_update_buf_on_transmit_stream(self):
+        called = []
+        fake_stream = MagicMock(spec=TransmitStream)
+        self.app.stream = fake_stream
+        self.app.sync = MagicMock()
+        fake_stream.buffer = MagicMock()
+        fake_stream.buffer.update_buf = lambda: called.append(True)
+        self.app.push_setting("buf", 300)
+        self.assertEqual(len(called), 0)
+
+    def test_push_setting_syncs_receiver_key_when_sync_present(self):
+        sent_keys = []
+
+        class FakeSync:
+            def send_setting(self, key, value):
+                sent_keys.append(key)
+            def send_command(self, action):
+                pass
+
+        self.app.sync = FakeSync()
+        self.app.push_setting("gain", 2.0)
+        self.assertIn("gain", sent_keys)
+
+    def test_push_setting_does_not_sync_transmitter_only_key(self):
+        sent_keys = []
+
+        class FakeSync:
+            def send_setting(self, key, value):
+                sent_keys.append(key)
+            def send_command(self, action):
+                pass
+
+        self.app.sync = FakeSync()
+        self.app.push_setting("target_ip", "192.168.1.5")
+        self.assertNotIn("target_ip", sent_keys)
+
+
+
+    # send_command
+
+    def test_send_command_calls_sync_send_command(self):
+        commands_sent = []
+
+        class FakeSync:
+            def send_command(self, action):
+                commands_sent.append(action)
+
+        self.app.sync = FakeSync()
+        self.app.send_command("start")
+        self.assertEqual(commands_sent, ["start"])
+
+    def test_send_command_without_sync_does_not_crash(self):
+        self.app.send_command("start")
+
 if __name__ == "__main__":
     unittest.main()
