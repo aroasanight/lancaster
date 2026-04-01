@@ -595,7 +595,7 @@ class TransmitStream:
         self.audio_in = AudioInput(self.config)
         self.audio_in.start(self.on_audio)
 
-    def on_audio(self, indata, frames, time, status):
+    def on_audio(self, indata, frames, time_info, status):
         if self.running:
             self.connection.send(MSG_AUDIO, indata.tobytes())
 
@@ -650,7 +650,7 @@ class ReceiveStream:
         self.running   = True
         self.audio_out = AudioOutput(self.config)
 
-        def on_playback(outdata, frames, time, status):
+        def on_playback(outdata, frames, time_info, status):
             block = self.buffer.pop()
             outdata[:] = block[:frames]
 
