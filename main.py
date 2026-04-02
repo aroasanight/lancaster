@@ -424,7 +424,7 @@ class PlaybackBuffer:
         self.pfilled = False
         self.pop_count = 0
         self.depth_acc = 0
-        self.WINDOW = 200
+        self.WINDOW = 20
         self.correction = None
         self.last_frame = None
 
