@@ -417,7 +417,6 @@ class AudioOutput:
 
 
 class PlaybackBuffer:
-    def __init__(self, config):
         self.config  = config
         self.queue = queue.Queue()
         self.lock = threading.Lock()
@@ -427,6 +426,7 @@ class PlaybackBuffer:
         self.WINDOW = 20
         self.correction = None
         self.last_frame = None
+        self.on_stats = on_stats
 
     def push(self, frames):
         self.queue.put(frames)
@@ -606,6 +606,8 @@ class Connection:
                 send_frame(self.sock, msg_type, payload)
             except OSError as e:
                 log.error(f"[Connection] send failed: {e}")
+                    self.running = False   # prevent repeated firings
+                    self.on_disconnect()
 
     def disconnect(self):
         self.running = False
@@ -856,6 +858,8 @@ class App:
         self.monitor = None
         self.buffer = None
 
+        self.on_setting_received = None
+
     def on_command(self, action: str):
         if action == "start":
             self.start_stream()
@@ -864,16 +868,24 @@ class App:
 
     def build_transmitter(self):
         self.connection = Connection(self.config)
-        self.sync       = SettingsSync(self.config, self.connection, role="transmitter", on_command=self.on_command)
+        self.sync       = SettingsSync(self.config, self.connection, role="transmitter", on_command=self.on_command, on_setting_received=self.on_setting_received)
         self.monitor    = DeviceMonitor(self.sync, "input")
         self.stream     = TransmitStream(self.config, self.connection, self.sync, self.monitor)
 
     def build_receiver(self):
         self.connection = Connection(self.config)
-        self.sync       = SettingsSync(self.config, self.connection, role="receiver", on_command=self.on_command)
+        self.sync       = SettingsSync(self.config, self.connection, role="receiver", on_command=self.on_command, on_setting_received=self.on_setting_received)
         self.monitor    = DeviceMonitor(self.sync, "output")
-        self.buffer     = PlaybackBuffer(self.config)
+        self.buffer     = PlaybackBuffer(self.config, on_stats=self.on_buffer_stats)
         self.stream     = ReceiveStream(self.config, self.connection, self.sync, self.monitor, self.buffer)
+
+    def on_buffer_stats(self, avg_ms: float):
+        if self.sync:
+            self.sync.send_stats(avg_ms)
+
+    def on_setting_received(self, key: str, value):
+        if self.on_setting_received:
+            self.on_setting_received(key, value)
 
     def pair(self, host: str = None):
         if self.config.mode == "transmitter":
