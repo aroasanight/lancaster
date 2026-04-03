@@ -417,6 +417,7 @@ class AudioOutput:
 
 
 class PlaybackBuffer:
+    def __init__(self, config, on_stats=None):
         self.config  = config
         self.queue = queue.Queue()
         self.lock = threading.Lock()
@@ -487,6 +488,9 @@ class PlaybackBuffer:
             elif error < -tolerance_ms:
                 self.correction = "repeat"
 
+            if self.on_stats:
+                self.on_stats(avg_ms)
+
             self.pop_count = 0
             self.depth_acc = 0
 
@@ -536,9 +540,11 @@ class Connection:
         self.send_lock = threading.Lock()
         self.on_message = None
         self.on_connect = None
+        self.on_disconnect = None   # called when socket drops unexpectedly
 
-    def connect(self, host: str, on_message):
+    def connect(self, host: str, on_message, on_connect=None):
         self.on_message = on_message
+        self.on_connect = on_connect
         self.running = True
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -551,6 +557,9 @@ class Connection:
         s.connect((host, self.config.target_port))
         self.sock = s
         print(f"[Connection] Connected to {host}:{self.config.target_port}")
+
+        if self.on_connect:
+            self.on_connect()
 
         threading.Thread(target=self.reader, daemon=True).start()
 
@@ -597,6 +606,10 @@ class Connection:
             except (ConnectionError, OSError):
                 break
 
+        # connection died without shutting down nicely
+        if self.running and self.on_disconnect:
+            self.on_disconnect()
+
     def send(self, msg_type: int, payload: bytes):
         if not self.sock:
             log.warning(f"[Connection] send called but no socket type={msg_type:#04x}")
@@ -606,6 +619,8 @@ class Connection:
                 send_frame(self.sock, msg_type, payload)
             except OSError as e:
                 log.error(f"[Connection] send failed: {e}")
+                # Broken pipe — treat as disconnect
+                if self.running and self.on_disconnect:
                     self.running = False   # prevent repeated firings
                     self.on_disconnect()
 
@@ -623,12 +638,13 @@ class Connection:
 
 
 class SettingsSync:
-    def __init__(self, config, connection, role:str, on_command=None):
+    def __init__(self, config, connection, role:str, on_command=None, on_setting_received=None):
         self.config = config
         self.connection = connection
         self.role = role
 
         self.on_command = on_command
+        self.on_setting_received = on_setting_received
 
         self.remote_input_devices  = []
         self.remote_output_devices = []
@@ -641,6 +657,10 @@ class SettingsSync:
         data = {"type": "command", "action": action}
         self.connection.send(MSG_CONTROL, json.dumps(data).encode())
 
+    def send_stats(self, avg_ms: float):
+        data = {"type": "stats", "avg_ms": avg_ms}
+        self.connection.send(MSG_CONTROL, json.dumps(data).encode())
+
     def send_device_list(self, kind:str):
         if kind == "input": devices = list_input_devices()
         elif kind == "output": devices = list_output_devices()
@@ -650,14 +670,14 @@ class SettingsSync:
         self.connection.send(MSG_CONTROL, json.dumps(data).encode())
 
     def send_all_settings(self):
-        # only sync receiver settings on new connection
+        # sync everything on new connection
         self.send_setting("sr", self.config.sr)
         self.send_setting("ch", self.config.ch)
         self.send_setting("buf", self.config.buf)
         self.send_setting("gain", self.config.gain)
         self.send_setting("tolerance", self.config.tolerance)
-        # self.send_setting("in_dev", self.config.in_dev)
-        # self.send_setting("out_dev", self.config.out_dev)
+        self.send_setting("in_dev", self.config.in_dev)
+        self.send_setting("out_dev", self.config.out_dev)
 
     def handle_message(self, msg_type, payload):
         if msg_type == MSG_CONTROL:
@@ -685,12 +705,20 @@ class SettingsSync:
                         (self.role == "transmitter" and data["key"] in Config.TRANSMITTER_KEYS)
                     )
                     if owns: self.config.save()
+                    if self.on_setting_received:
+                        self.on_setting_received(data["key"], data["value"])
 
             elif data["type"] == "device_list":
                 if data["kind"] == "input":
                     self.remote_input_devices = data["devices"]
                 elif data["kind"] == "output":
                     self.remote_output_devices = data["devices"]
+                if self.on_setting_received:
+                    self.on_setting_received("device_list", data["kind"])
+
+            elif data["type"] == "stats":
+                if self.on_setting_received:
+                    self.on_setting_received("stats", data["avg_ms"])
 
             elif data["type"] == "command":
                 if self.on_command:
@@ -737,12 +765,36 @@ class TransmitStream:
         self.send_queue = queue.Queue()
         self.send_thread = None
 
+        self.on_disconnect = None
+
     def connect(self, host):
         self.config.set_target_ip(host)
         self.config.save()
-        self.connection.connect(host, self.sync.handle_message)
-        self.sync.send_device_list("input")
+        self.connection.connect(host, self.sync.handle_message, on_connect=self.on_connected)
+        self.connection.on_disconnect = self.handle_disconnect
         self.monitor.start()
+
+    def on_connected(self):
+        self.sync.send_all_settings()
+        self.sync.send_device_list("input")
+        self.sync.send_device_list("output")
+
+    def handle_disconnect(self):
+        log.warning("[TransmitStream] connection lost")
+        was_running = self.running
+        if was_running:
+            self.stop_audio()
+        if self.on_disconnect:
+            self.on_disconnect(was_streaming=was_running)
+
+    def stop_audio(self):
+        self.running = False
+        if self.send_thread is not None:
+            self.send_thread.join(timeout=1.0)
+            self.send_thread = None
+        if self.audio_in is not None:
+            self.audio_in.stop()
+            self.audio_in = None
 
     def start_stream(self):
         self.monitor.stop()
@@ -768,20 +820,15 @@ class TransmitStream:
             self.send_queue.put(indata.tobytes())
 
     def stop_stream(self):
-        if self.send_thread is not None:
-            self.send_thread.join(timeout=1.0)
-            self.send_thread = None
-        if self.audio_in is not None:
-            self.audio_in.stop()
-            self.audio_in = None
-        self.running = False
+        self.stop_audio()
         self.monitor.start()
 
     def disconnect(self):
 
-        if self.audio_in is not None: self.stop_stream()
+        if self.audio_in is not None: self.stop_audio()
 
         self.monitor.stop()
+        self.connection.on_disconnect = None   # prevent callback after clean disconnect
         self.connection.disconnect()
 
 
@@ -796,6 +843,8 @@ class ReceiveStream:
 
         self.audio_out = None
         self.running = False
+
+        self.on_disconnect = None
 
     def on_message(self, msg_type, payload):
         if msg_type == MSG_AUDIO:
@@ -813,13 +862,22 @@ class ReceiveStream:
 
     def listen(self):
         self.monitor.start()
+        self.connection.on_disconnect = self.handle_disconnect
         self.connection.listen(
             on_message=self.on_message,
             on_connect=self.on_connected
         )
 
+    def handle_disconnect(self):
+        log.warning("[ReceiveStream] transmitter disconnected")
+        # intentionally keep playing, drain buffer (no dropouts if possible)
+        self.sync.remote_input_devices = []
+        if self.on_disconnect:
+            self.on_disconnect(was_streaming=self.running)
+
     def on_connected(self):
         self.sync.send_all_settings()
+        self.sync.send_device_list("input")
         self.sync.send_device_list("output")
 
     def start_stream(self):
@@ -845,11 +903,15 @@ class ReceiveStream:
         if self.audio_out is not None:
             self.stop_stream()
         self.monitor.stop()
+        self.connection.on_disconnect = None
         self.connection.disconnect()
 
 
 
 class App:
+    # delays before reconnect
+    RECONNECT_DELAYS = [1, 2, 4, 8, 8]
+
     def __init__(self, config: Config):
         self.config = config
         self.stream = None
@@ -858,6 +920,13 @@ class App:
         self.monitor = None
         self.buffer = None
 
+        self.reconnect_cancel = False
+        self.reconnect_thread = None
+
+        self.on_peer_connected = None
+        self.on_peer_disconnected = None
+        self.on_reconnect_attempt = None
+        self.on_reconnect_failed = None
         self.on_setting_received = None
 
     def on_command(self, action: str):
@@ -871,6 +940,7 @@ class App:
         self.sync       = SettingsSync(self.config, self.connection, role="transmitter", on_command=self.on_command, on_setting_received=self.on_setting_received)
         self.monitor    = DeviceMonitor(self.sync, "input")
         self.stream     = TransmitStream(self.config, self.connection, self.sync, self.monitor)
+        self.stream.on_disconnect = self.tx_disconnected
 
     def build_receiver(self):
         self.connection = Connection(self.config)
@@ -878,6 +948,7 @@ class App:
         self.monitor    = DeviceMonitor(self.sync, "output")
         self.buffer     = PlaybackBuffer(self.config, on_stats=self.on_buffer_stats)
         self.stream     = ReceiveStream(self.config, self.connection, self.sync, self.monitor, self.buffer)
+        self.stream.on_disconnect = self.rx_disconnected
 
     def on_buffer_stats(self, avg_ms: float):
         if self.sync:
@@ -887,14 +958,77 @@ class App:
         if self.on_setting_received:
             self.on_setting_received(key, value)
 
+    def tx_disconnected(self, was_streaming: bool):
+        if self.on_peer_disconnected:
+            self.on_peer_disconnected(was_streaming=was_streaming, reconnecting=True)
+        self.start_reconnect(was_streaming=was_streaming)
+
+    def rx_disconnected(self, was_streaming: bool):
+        if self.on_peer_disconnected:
+            self.on_peer_disconnected(was_streaming=was_streaming, reconnecting=False)
+
+    def start_reconnect(self, was_streaming: bool):
+        self.reconnect_cancel = False
+        host = self.config.target_ip
+        if not host:
+            if self.on_reconnect_failed:
+                self.on_reconnect_failed()
+            return
+        delays = self.RECONNECT_DELAYS
+
+        def reconnect_thread_def():
+            for attempt, delay in enumerate(delays, start=1):
+                if self.reconnect_cancel:
+                    log.info("[App] reconnect cancelled")
+                    return
+                if self.on_reconnect_attempt:
+                    self.on_reconnect_attempt(attempt, len(delays))
+                log.info(f"[App] reconnect attempt {attempt}/{len(delays)} in {delay}s")
+                time.sleep(delay)
+                if self.reconnect_cancel:
+                    return
+                try:
+                    self.connection = Connection(self.config)
+                    self.sync.connection = self.connection
+                    self.sync.on_setting_received = self.on_setting_received
+                    self.stream.connection = self.connection
+                    self.stream.on_disconnect = self.tx_disconnected
+                    self.connection.on_disconnect = self.stream.handle_disconnect
+                    self.connection.connect(host, self.sync.handle_message, on_connect=self.stream.on_connected)
+                    if was_streaming:
+                        self.stream.start_stream()
+                    if self.on_peer_connected:
+                        self.on_peer_connected()
+                    log.info("[App] fixed it")
+                    return
+                except OSError as e:
+                    log.warning(f"[App] reconnect attempt {attempt} failed: {e}")
+            log.error("[App] fucked it, giving up")
+            if self.on_reconnect_failed:
+                self.on_reconnect_failed()
+
+        self.reconnect_thread = threading.Thread(target=reconnect_thread_def, daemon=True)
+        self.reconnect_thread.start()
+
+    def cancel_reconnect(self):
+        self.reconnect_cancel = True
+
     def pair(self, host: str = None):
         if self.config.mode == "transmitter":
             if host is None:
                 raise ValueError("host is required for transmitter mode")
             self.build_transmitter()
             self.stream.connect(host)
+            if self.on_peer_connected:
+                self.on_peer_connected()
         elif self.config.mode == "receiver":
             self.build_receiver()
+            original_on_connect = self.stream.on_connected
+            def _on_connect_with_notify():
+                original_on_connect()
+                if self.on_peer_connected:
+                    self.on_peer_connected()
+            self.connection.on_connect = _on_connect_with_notify
             self.stream.listen()
 
     def start_stream(self):
@@ -908,6 +1042,7 @@ class App:
         self.stream.stop_stream()
 
     def unpair(self):
+        self.cancel_reconnect()
         if self.stream is None:
             return
         self.stream.disconnect()
@@ -945,14 +1080,9 @@ class App:
         if key == "buf" and self.stream is not None:
             if isinstance(self.stream, ReceiveStream):
                 self.stream.buffer.update_buf()
-            # buf change scaled tolerance — send updated tolerance too
             if self.sync is not None:
                 self.sync.send_setting("tolerance", self.config.tolerance)
 
-        # Persist only if this side owns the key; transmitter-local keys
-        # (target_ip, target_port, t_nic_ip, in_dev) are always saved on the
-        # transmitter, receiver keys are always saved on the receiver.
-        # mode and both nic_ips are always saved regardless.
         always_save = {"mode", "t_nic_ip", "r_nic_ip"}
         role = self.config.mode
         owns = (
