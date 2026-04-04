@@ -71,6 +71,41 @@ def port_in_use(port:int):
             return True
 
 
+def list_nics():
+    results = [("Any (0.0.0.0)", "0.0.0.0")]
+
+    # use socket library
+    try:
+        hostname = socket.gethostname()
+        interfaces = socket.getaddrinfo(hostname, None)
+        seen = set()
+
+        for interface in interfaces:
+            ip = interface[4][0]
+            if ip.startswith("127.") or ":" in ip or ip in seen:
+                pass
+            else: 
+                seen.add(ip)
+                results.append((ip, ip))
+    except Exception: pass
+
+    # also try netifaces
+    try:
+        import netifaces
+
+        seen2 = {r[1] for r in results}
+        for interface in netifaces.interfaces():
+            addrs = netifaces.ifaddresses(interface).get(netifaces.AF_INET, [])
+            for a in addrs:
+                ip = a.get("addr", "")
+                if ip and ip not in seen2 and not ip.startswith("127."):
+                    results.append((f"{interface} — {ip}", ip))
+                    seen2.add(ip)
+    except ImportError: pass
+
+    return results
+
+
 
 
 #region audio device functions
