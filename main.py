@@ -23,7 +23,7 @@ import logging
 log = logging.getLogger("main")
 
 logging.basicConfig(
-    level=logging.DEBUG,   # change to DEBUG when diagnosing issues
+    level=logging.WARNING,   # change to DEBUG when diagnosing issues
     format="%(asctime)s.%(msecs)03d [%(name)s] %(message)s",
     datefmt="%H:%M:%S"
 )
