@@ -15,3 +15,17 @@ made for my [a-level computer science coursework](https://www.ocr.org.uk/qualifi
 I highly doubt anybody will interact with this repo whilst I'm working on it but I do feel the need to mention that, until the project has been submitted & graded, I will not be looking at or accepting pull requests/issues etc, since this does have to be my work and my work only. Its only public since it's something I find useful and so someone else somewhere probably will as well :)
 
 once I've finished my course I'll convert the writeup over to markdown, redact bits of it like candidate & centre name & number and stick it here (if I remember) :D
+
+# requirements
+
+### from pip (check requirements.txt)
+
+install with `pip3 install -r requirements.txt` or just `pip` if your system is configured that way. if not using a venv you may need to pass `--break-system-packages` but do so at your own risk. I have personally never had a problem but that doesn't mean you won't.
+
+- numpy
+- sounddevice
+
+### not from pip (don't check requirements.txt)
+
+- tkinter (install with `brew install python3-tk` or similar)
+- portaudio (install with `sudo apt install libportaudio2` or similar)
