@@ -29,3 +29,7 @@ install with `pip3 install -r requirements.txt` or just `pip` if your system is 
 
 - tkinter (install with `brew install python3-tk` or similar)
 - portaudio (install with `sudo apt install libportaudio2` or similar)
+
+# screenshots
+
+<img src="https://raw.githubusercontent.com/aroasanight/lancaster/refs/heads/main/readme-assets/macos-dual.png" width="100%" alt="loopback lancaster running on macOS" />
