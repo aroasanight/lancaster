@@ -4,8 +4,8 @@
 # 
 # created on 2026/03/30
 # 
-# it works on my machine!
-#    - Ari
+# "it works on my machine!"
+#      - Ari
 #
 
 
@@ -19,6 +19,9 @@ import threading
 import queue
 import numpy as np
 import time
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import math
 import logging
 log = logging.getLogger("main")
 
@@ -1173,3 +1176,849 @@ class App:
         if self.sync is not None:
             self.sync.send_command(action)
 
+
+
+
+#region gui helpers & vars
+
+UNHEALTHY_THRESHOLD = 0.04
+
+BUF_MIN_MS  = 100 # o.1s
+BUF_MAX_MS  = 10000 # 10s
+BUF_LOG_MIN = math.log(BUF_MIN_MS)
+BUF_LOG_MAX = math.log(BUF_MAX_MS)
+
+def linear_to_buf_ms(linear: float) -> int:
+    ms = math.exp(BUF_LOG_MIN + linear * (BUF_LOG_MAX - BUF_LOG_MIN))
+    return max(BUF_MIN_MS, min(BUF_MAX_MS, round(ms)))
+
+def buf_ms_to_linear(ms: int) -> float:
+    ms = max(BUF_MIN_MS, min(BUF_MAX_MS, ms))
+    return (math.log(ms) - BUF_LOG_MIN) / (BUF_LOG_MAX - BUF_LOG_MIN)
+
+
+
+
+#region gui class
+class GUI:
+    def __init__(self, root: tk.Tk):
+
+        # create window
+        self.root = root
+        self.root.title("lancaster")
+        self.root.resizable(False, False)
+
+        self.root.update_idletasks()
+        w = self.root.winfo_reqwidth()
+        self.root.minsize(w, 1)
+
+        self.style = ttk.Style()
+
+        self.config = Config()
+        self.app = App(self.config)
+
+        self.paired = False
+        self.streaming = False
+        self.mode = self.config.mode
+        self.sock_was_live = False
+        self.reconnecting = False
+
+        self.correction_count = 0
+        self.pop_count = 0
+        self.avg_ms = 0.0
+        self.error_ms = 0.0
+        self.remote_avg_ms = None
+
+        self.ip_cycle_index = 0
+
+        # stop feedback loops when updating faders
+        self.updating_buf = False
+        self.updating_gain = False
+        self.updating_tolerance = False
+
+        self.wire_app_callbacks()
+        self.build_ui()
+        self.populate_nics()
+        self.refresh_device_lists()
+        self.apply_mode_layout()
+        self.update_status_bar()
+        self.poll()
+
+    def wire_app_callbacks(self):
+        self.app.on_peer_connected = lambda: self.root.after(0, self.on_peer_connected)
+        self.app.on_peer_disconnected = lambda was_streaming, reconnecting: \
+            self.root.after(0, lambda: self.on_peer_disconnected(was_streaming, reconnecting))
+        self.app.on_reconnect_attempt = lambda attempt, total: \
+            self.root.after(0, lambda: self.on_reconnect_attempt(attempt, total))
+        self.app.on_reconnect_failed = lambda: self.root.after(0, self.on_reconnect_failed)
+        self.app.on_setting_received = lambda key, value: \
+            self.root.after(0, lambda: self.on_remote_setting(key, value))
+
+    
+    
+    #region ui construction
+    def build_ui(self):
+        PAD = 13
+        root = self.root
+
+        # config path box
+        cf = ttk.Frame(root)
+        cf.pack(fill="x", padx=PAD, pady=(PAD, 4))
+        ttk.Label(cf, text="config:", width=8).pack(side="left")
+        self.config_var = tk.StringVar(value=self.config.path)
+        ttk.Entry(cf, textvariable=self.config_var, state="readonly").pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ttk.Button(cf, text="browse...", command=self.browse_config).pack(side="left")
+
+
+        # mode selection
+        seg_outer = ttk.Frame(root, relief="sunken")
+        seg_outer.pack(fill="x", padx=PAD, pady=(4, 2))
+
+        self.tab_tx = ttk.Button(seg_outer, text="transmitter", command=lambda: self.switch_mode("transmitter"))
+        self.tab_tx.pack(side="left", fill="x", expand=True)
+
+        # ttk.Separator(seg_outer, orient="vertical").pack(side="left", fill="y", pady=2)
+
+        self.tab_rx = ttk.Button(seg_outer, text="reciever", command=lambda: self.switch_mode("receiver"))
+        self.tab_rx.pack(side="left", fill="x", expand=True)
+
+
+        # connect/disconnect     listen/stop listening
+        con_frame = ttk.Frame(root)
+        con_frame.pack(fill="x", padx=PAD, pady=(2, 4))
+        self.btn_connect = ttk.Button(con_frame, text="connect", command=self.connect)
+        self.btn_connect.pack(side="left", fill="x", expand=True)
+        self.btn_disconnect = ttk.Button(con_frame, text="disconnect", command=self.disconnect, state="disabled")
+        self.btn_disconnect.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+
+        # network config section
+        net = ttk.LabelFrame(root, text="network config")
+        net.pack(fill="x", padx=PAD, pady=4)
+
+        ip_row = ttk.Frame(net)
+        ip_row.pack(fill="x", padx=6, pady=3)
+
+
+        # target IP
+        self.lbl_target_ip = ttk.Label(ip_row, text="target IP:", width=13)
+        self.lbl_target_ip.pack(side="left")
+
+        self.ip_vars = []
+        self.ip_entries = []
+
+        saved_ip = (self.config.target_ip or "").split(".")
+
+        while len(saved_ip) < 4:
+            saved_ip.append("")
+
+        for i in range(4):
+            v = tk.StringVar(value=saved_ip[i])
+            self.ip_vars.append(v)
+            e = ttk.Entry(ip_row, textvariable=v, width=4, justify="center")
+            e.pack(side="left")
+            v.trace_add("write", lambda *_, i=i: self.on_ip_change())
+            if i < 3:
+                ttk.Label(ip_row, text=".").pack(side="left")
+            self.ip_entries.append(e)
+
+
+        # port
+        port_row = ttk.Frame(net)
+        port_row.pack(fill="x", padx=6, pady=3)
+
+        self.lbl_port = ttk.Label(port_row, text="port:", width=13)
+        self.lbl_port.pack(side="left")
+
+        self.port_var = tk.IntVar(value=self.config.target_port)
+        self.port_spin = ttk.Spinbox(port_row, from_=1024, to=65535, textvariable=self.port_var, width=8, command=self.on_port_change)
+        self.port_spin.pack(side="left")
+        self.port_var.trace_add("write", lambda *_: self.on_port_change())
+
+
+        # nic section
+        nic_row = ttk.Frame(net)
+        nic_row.pack(fill="x", padx=6, pady=3)
+
+        ttk.Label(nic_row, text="NIC:", width=13).pack(side="left")
+        self.nic_var = tk.StringVar()
+        self.nic_combo = ttk.Combobox(nic_row, textvariable=self.nic_var, state="readonly")
+        self.nic_combo.pack(side="left", fill="x", expand=True)
+        self.nic_combo.bind("<<ComboboxSelected>>", self.on_nic_change)
+        self.nic_labels = []
+        self.nic_values = []
+
+
+        # audio settings section
+        audio = ttk.LabelFrame(root, text="audio")
+        audio.pack(fill="x", padx=PAD, pady=4)
+
+        in_row = ttk.Frame(audio)
+        in_row.pack(fill="x", padx=6, pady=3)
+        ttk.Label(in_row, text="in:", width=13).pack(side="left")
+        self.in_var = tk.StringVar()
+        self.in_combo = ttk.Combobox(in_row, textvariable=self.in_var, state="readonly")
+        self.in_combo.pack(side="left", fill="x", expand=True)
+        self.in_combo.bind("<<ComboboxSelected>>", self.on_in_dev_change)
+
+        out_row = ttk.Frame(audio)
+        out_row.pack(fill="x", padx=6, pady=3)
+        ttk.Label(out_row, text="out:", width=13).pack(side="left")
+        self.out_var = tk.StringVar()
+        self.out_combo = ttk.Combobox(out_row, textvariable=self.out_var, state="readonly")
+        self.out_combo.pack(side="left", fill="x", expand=True)
+        self.out_combo.bind("<<ComboboxSelected>>", self.on_out_dev_change)
+
+        # channels & sample rate row
+        ch_sr_row = ttk.Frame(audio)
+        ch_sr_row.pack(fill="x", padx=6, pady=3)
+
+        # channels
+        ttk.Label(ch_sr_row, text="channels:", width=13).pack(side="left")
+        self.ch_var = tk.IntVar(value=self.config.ch)
+        self.ch_spin = ttk.Spinbox(ch_sr_row, from_=1, to=32, textvariable=self.ch_var, width=5, command=self.on_ch_change)
+        self.ch_spin.pack(side="left")
+        self.ch_var.trace_add("write", lambda *_: self.on_ch_change())
+
+        # sample rare
+        ttk.Label(ch_sr_row, text="sample rate:", width=13, anchor="e").pack(side="left", padx=(12, 0))
+        self.sr_var = tk.StringVar(value=str(self.config.sr))
+        self.sr_combo = ttk.Combobox(ch_sr_row, textvariable=self.sr_var, values=SR_OPTIONS, state="readonly", width=8)
+        self.sr_combo.pack(side="left")
+        self.sr_combo.bind("<<ComboboxSelected>>", self.on_sr_change)
+
+
+        # buffer/gain/tolerance
+        sliders = ttk.LabelFrame(root, text="buffer/gain")
+        sliders.pack(fill="x", padx=PAD, pady=4)
+
+        # scaling
+        self.buf_linear_var = tk.DoubleVar(value=buf_ms_to_linear(self.config.buf))
+        self.buf_ms_var = tk.IntVar(value=self.config.buf)
+        self.tol_var = tk.IntVar(value=self.config.tolerance)
+        self.gain_var = tk.DoubleVar(value=round(self.config.gain, 2))
+        self.tol_on = tk.BooleanVar(value=True)
+
+        # buffer
+        buf_row = ttk.Frame(sliders)
+        buf_row.pack(fill="x", padx=6, pady=2)
+        ttk.Label(buf_row, text="buffer size:", width=15).pack(side="left")
+        self.buf_scale = ttk.Scale(buf_row, from_=0.0, to=1.0, orient="horizontal", variable=self.buf_linear_var, command=self.on_buf_slider_move)
+        self.buf_scale.pack(side="left", fill="x", expand=True)
+        self.buf_entry = ttk.Entry(buf_row, textvariable=self.buf_ms_var, width=6, justify="center")
+        self.buf_entry.pack(side="left", padx=(4, 0))
+        self.buf_entry.bind("<Return>", lambda _: self.on_buf_entry_commit())
+        ttk.Label(buf_row, text="ms").pack(side="left", padx=(2, 0))
+
+        # tolerance
+        tolerance_row = ttk.Frame(sliders)
+        tolerance_row.pack(fill="x", padx=6, pady=2)
+        ttk.Label(tolerance_row, text="tolerance:", width=15).pack(side="left")
+        self.tolerance_fader = ttk.Scale(tolerance_row, from_=1, to=max(self.config.buf, 1), orient="horizontal", variable=self.tol_var, command=self.on_tol_slider_move)
+        self.tolerance_fader.pack(side="left", fill="x", expand=True)
+        self.tolerance_entry = ttk.Entry(tolerance_row, textvariable=self.tol_var, width=6, justify="center")
+        self.tolerance_entry.pack(side="left", padx=(4, 0))
+        self.tolerance_entry.bind("<Return>", lambda _: self.on_tol_entry_commit())
+        ttk.Label(tolerance_row, text="ms").pack(side="left", padx=(2, 4))
+        self.tol_check = ttk.Checkbutton(tolerance_row, text="On", variable=self.tol_on, command=self.on_tol_toggle)
+        self.tol_check.pack(side="left")
+
+        # gain
+        gain_row = ttk.Frame(sliders)
+        gain_row.pack(fill="x", padx=6, pady=2)
+        ttk.Label(gain_row, text="gain x:", width=15).pack(side="left")
+        self.gain_fader = ttk.Scale(gain_row, from_=0.0, to=4.0, orient="horizontal", variable=self.gain_var, command=self.on_gain_slider_move)
+        self.gain_fader.pack(side="left", fill="x", expand=True)
+        self.gain_entry = ttk.Entry(gain_row, textvariable=self.gain_var, width=6, justify="center")
+        self.gain_entry.pack(side="left", padx=(4, 0))
+        self.gain_entry.bind("<Return>", lambda _: self.on_gain_entry_commit())
+        ttk.Label(gain_row, text="x").pack(side="left", padx=(2, 0))
+
+        # transmit stop transmit buttons
+        tx_frame = ttk.Frame(root)
+        tx_frame.pack(fill="x", padx=PAD, pady=(4, 2))
+        self.btn_start = ttk.Button(tx_frame, text="start!!", command=self.start_transmission, state="disabled")
+        self.btn_start.pack(side="left", fill="x", expand=True)
+        self.btn_stop = ttk.Button(tx_frame, text="stop :,(", command=self.stop_transmission, state="disabled")
+        self.btn_stop.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        stats_frame = ttk.Frame(root)
+        stats_frame.pack(fill="x", padx=PAD, pady=(2, 6))
+        ttk.Button(stats_frame, text="toggle stats window", command=self.toggle_stats).pack()
+
+        # bottom bar
+        sb = ttk.Frame(root, relief="sunken")
+        sb.pack(fill="x", side="bottom")
+        self.lbl_avg = ttk.Label(sb, text="avg=—ms  error=—ms", anchor="w")
+        self.lbl_avg.pack(side="left", padx=6, pady=2)
+        self.lbl_status = ttk.Label(sb, text="status: idle", anchor="e")
+        self.lbl_status.pack(side="right", padx=6, pady=2)
+        self.btn_cancel_reconnect = ttk.Button(sb, text="cancel reconnect...", command=self.cancel_reconnect)
+
+
+        # stats window
+        self.stats_window = None
+
+
+
+
+
+
+
+
+
+
+    #region ui updater functios
+
+    # when setting is changed on remove
+    def on_remote_setting(self, key: str, value):
+
+        # sync avg/error stats
+        if key == "stats":
+            self.remote_avg_ms = float(value)
+            return
+        
+        # sync device list
+        if key == "device_list":
+            self.refresh_device_lists()
+            return
+        
+        #sync settings
+        try:
+            if key == "buf":
+                ms = int(value)
+                self.buf_ms_var.set(ms)
+                self.buf_linear_var.set(buf_ms_to_linear(ms))
+                self.tolerance_fader.configure(to=max(ms, 1))
+            elif key == "tolerance":
+                self.tol_var.set(int(value))
+            elif key == "gain":
+                self.gain_var.set(round(float(value), 2))
+            elif key == "ch":
+                self.ch_var.set(int(value))
+            elif key == "sr":
+                self.sr_var.set(str(int(value)))
+            elif key == "in_dev":
+                if value and value in self.in_combo["values"]:
+                    self.in_var.set(value) # setting in dropdown in gui
+            elif key == "out_dev":
+                if value and value in self.out_combo["values"]:
+                    self.out_var.set(value)
+        except Exception:
+            pass
+
+
+    # switch transmitter/receiver modes
+    def switch_mode(self, mode: str):
+        if mode == self.mode: return # skip if already in target mode
+
+        if self.paired:   #i absolutely love how tkinter uses "askyesno" xD
+            if not messagebox.askyesno("switch modes", "are you sure? current connection will be killed"):
+                return
+            self.disconnect(silent=True)
+        
+        self.mode = mode
+        self.app.push_setting("mode", mode)
+        self.apply_mode_layout()
+        self.refresh_device_lists()
+
+
+    # change ui depending on mode 
+    def apply_mode_layout(self):
+        if self.mode == "transmitter":
+            tx = True
+        else: tx = False
+
+        self.tab_tx.state(["pressed"] if tx else ["!pressed"])
+        self.tab_tx.state(["pressed"] if tx else ["!pressed"])
+
+        if tx:
+            self.btn_connect.configure(text="connect")
+            self.btn_disconnect.configure(text="disconnect")
+            self.lbl_port.configure(text="port:")
+            self.port_var.set(self.config.target_port)
+        else:
+            self.btn_connect.configure(text="listen")
+            self.btn_disconnect.configure(text="ignore")
+            self.lbl_port.configure(text="open port:")
+            self.port_var.set(self.config.port)
+
+        self.refresh_nic_selection()
+        self.apply_connection_state()
+
+
+    # enable.disable parts of ui depending on mode/connection state
+    def apply_connection_state(self):
+        if self.mode == "transmitter":
+            tx = True
+        else:
+            tx = False
+        
+        if self.app.connection is not None and self.app.connection.sock is not None:
+            sock_live = True
+        else: sock_live = False
+        
+        if tx and not self.paired:
+            ip_state = "normal"
+        else:
+            ip_state = "disabled"
+            
+        for e in self.ip_entries:
+            e.configure(state=ip_state)
+
+        if self.paired:
+            self.btn_connect.configure(state="disabled")
+            self.btn_disconnect.configure(state="normal")
+            self.nic_combo.configure(state="disabled")
+            self.port_spin.configure(state="disabled")
+        else:
+            self.btn_connect.configure(state="normal")
+            self.btn_disconnect.configure(state="disabled")
+            self.nic_combo.configure(state="readonly")
+            self.port_spin.configure(state="normal")
+
+        if tx:
+            in_state  = "readonly"
+            out_state = "readonly" if sock_live else "disabled"
+        else:
+            in_state  = "readonly" if sock_live else "disabled"
+            out_state = "readonly"
+
+        self.in_combo.configure(state=in_state)
+        self.out_combo.configure(state=out_state)
+
+        # audio config settings
+        if not tx or self.paired:
+            a_config_state = "normal"
+            self.sr_combo.configure(state="readonly")
+        else:
+            a_config_state = "disabled"
+            self.sr_combo.configure(state="disabled")
+
+        self.ch_spin.configure(state=a_config_state)
+        self.buf_scale.configure(state=a_config_state)
+        self.buf_entry.configure(state=a_config_state)
+        self.tolerance_fader.configure(state=a_config_state)
+        self.tolerance_entry.configure(state=a_config_state)
+        self.tol_check.configure(state=a_config_state)
+        self.gain_fader.configure(state=a_config_state)
+        self.gain_entry.configure(state=a_config_state)
+
+        # you can stop during reconnect but not start, both buttons need a vvalid connection as well
+        if sock_live and not self.streaming and not self.reconnecting:
+            self.btn_start.configure(state="normal")
+        else:
+            self.btn_start.configure(state="disabled")
+
+        if sock_live and self.streaming:
+            self.btn_stop.configure(state="normal")
+        else:
+            self.btn_stop.configure(state="disabled")
+
+
+
+    #region other gui functions
+
+    # nic stuff
+    def populate_nics(self):
+        nics = list_nics()
+        self.nic_labels = [n[0] for n in nics]
+        self.nic_values = [n[1] for n in nics]
+        self.nic_combo["values"] = self.nic_labels
+
+    def refresh_nic_selection(self):
+        if self.mode == "transmitter":
+            tx = True
+        else: tx = False
+
+        current_ip = self.config.t_nic_ip if tx else self.config.r_nic_ip
+        try:
+            idx = self.nic_values.index(current_ip)
+            self.nic_var.set(self.nic_labels[idx])
+        except ValueError:
+            if self.nic_labels:
+                self.nic_var.set(self.nic_labels[0])
+
+
+
+    #refresh device lists
+    def refresh_device_lists(self):
+        if self.mode == "transmitter":
+            tx = True
+        else: tx = False
+
+        if tx:
+            in_devs = list_input_devices()
+            in_current = self.config.in_dev or ""
+            out_devs = self.app.sync.remote_output_devices if self.app.sync else []
+            out_current = self.config.out_dev or ""
+        else:
+            in_devs = self.app.sync.remote_input_devices if self.app.sync else []
+            in_current = self.config.in_dev or ""
+            out_devs = list_output_devices()
+            out_current = self.config.out_dev or ""
+
+        self.in_combo["values"] = in_devs
+        self.out_combo["values"] = out_devs
+
+        if in_current in in_devs:
+            self.in_var.set(in_current)
+        elif in_devs:
+            self.in_var.set(in_devs[0])
+        else:
+            self.in_var.set("")
+
+        if out_current in out_devs:
+            self.out_var.set(out_current)
+        elif out_devs:
+            self.out_var.set(out_devs[0])
+        else:
+            self.out_var.set("")
+
+
+
+
+    #region ui actual useful functions
+
+    def on_peer_connected(self):
+        self.reconnecting  = False
+        self.sock_was_live = True
+        self.btn_cancel_reconnect.pack_forget()
+        self.refresh_device_lists()
+        self.apply_connection_state()
+        self.update_status_bar()
+
+    def on_peer_disconnected(self, was_streaming:bool, reconnecting:bool):
+        self.reconnecting  = reconnecting
+        self.sock_was_live = False
+        if reconnecting:
+            self.lbl_status.configure(text="reconnecting...")
+            self.btn_cancel_reconnect.pack(side="left", padx=4, pady=2)
+        self.apply_connection_state()
+        self.update_status_bar()
+
+    def on_reconnect_attempt(self, attempt: int, total: int):
+        self.lbl_status.configure(text=f"reconnecting... ({str(attempt)}/{str(total)})")
+
+    def on_reconnect_failed(self):
+        self.reconnecting = False
+        self.paired = False
+        self.streaming = False
+        self.lbl_status.configure(text="")
+        self.btn_cancel_reconnect.pack_forget()
+        self.apply_mode_layout()
+        self.update_status_bar()
+        messagebox.showwarning("reconnect failed", "bob the builder couldn't fix this. :,(")
+
+    def cancel_reconnect(self):
+        self.app.cancel_reconnect()
+        self.reconnecting = False
+        self.paired = False
+        self.streaming = False
+        self.lbl_status.configure(text="")
+        self.btn_cancel_reconnect.pack_forget()
+        self.apply_mode_layout()
+        self.update_status_bar()
+
+    def connect(self):
+
+        def do_it_NOW():
+            try:
+                if self.mode == "transmitter":
+                    host = ".".join(v.get() for v in self.ip_vars)
+                    self.app.pair(host=host)
+                else:
+                    self.app.pair()
+
+                self.paired = True
+
+                if self.mode == "receiver":
+                    self.root.after(0, self.apply_connection_state)
+                    self.root.after(0, self.update_status_bar)
+
+            except Exception as e:
+                self.paired = False
+                self.root.after(0, lambda: messagebox.showerror("connection error >:/", str(e)))
+                self.root.after(0, self.apply_mode_layout)
+
+        threading.Thread(target=do_it_NOW, daemon=True).start()
+
+        lbl = "connecting..." if self.mode == "transmitter" else "listening..."
+        self.btn_connect.configure(state="disabled", text=lbl)
+
+    def disconnect(self, silent=False):
+        self.app.cancel_reconnect()
+        self.reconnecting = False
+
+        self.btn_cancel_reconnect.pack_forget()
+
+        if self.streaming: self.stop_transmission()
+            
+        try: self.app.unpair()
+        except Exception: pass
+
+        self.paired = False
+        self.streaming = False
+        self.sock_was_live = False
+
+        self.apply_mode_layout()
+        self.update_status_bar()
+
+
+
+    def start_transmission(self):
+        try:
+            self.app.start_stream()
+            self.app.send_command("start")
+            self.streaming = True
+            self.apply_connection_state()
+            self.update_status_bar()
+        except Exception as e:
+            messagebox.showerror("stream died", str(e))
+
+    def stop_transmission(self):
+        try:
+            self.app.stop_stream()
+            self.app.send_command("stop")
+        except Exception: pass
+        self.streaming = False
+        self.apply_connection_state()
+        self.update_status_bar()
+        
+
+
+
+    def on_ip_change(self, blank=None):
+        try: self.app.push_setting("target_ip", ".".join(v.get() for v in self.ip_vars))
+        except Exception: pass
+
+    def on_port_change(self, blank=None):
+        try:
+            if self.mode == "transmitter":
+                self.app.push_setting("target_port", self.port_var.get())
+            else:
+                self.app.push_setting("port", self.port_var.get())
+        except Exception: pass
+
+    def on_nic_change(self, blank=None):
+        try:
+            if self.mode == "transmitter":
+                self.app.push_setting("t_nic_ip", self.nic_values[self.nic_labels.index(self.nic_var.get())])
+            else:
+                self.app.push_setting("r_nic_ip", self.nic_values[self.nic_labels.index(self.nic_var.get())])
+        except Exception: pass
+
+    def on_in_dev_change(self, blank=None):
+        val = self.in_var.get()
+        if val: self.app.push_setting("in_dev", val)
+
+    def on_out_dev_change(self, blank=None):
+        val = self.out_var.get()
+        if val: self.app.push_setting("out_dev", val)
+
+    def on_ch_change(self, blank=None):
+        try: self.app.push_setting("ch", self.ch_var.get())
+        except Exception: pass
+
+    def on_sr_change(self, blank=None):
+        try: self.app.push_setting("sr", int(self.sr_var.get()))
+        except Exception: pass
+
+    # buffer is on a log scale
+    def on_buf_slider_move(self, val=None):
+        if self.updating_buf: return # stop feedback 
+        self.updating_buf = True
+
+        if val is not None: linear = float(val) 
+        else: linear = self.buf_linear_var.get()
+
+        ms = linear_to_buf_ms(linear)
+
+        self.buf_ms_var.set(ms)
+        self.commit_buf(ms)
+        self.updating_buf = False
+
+    def on_buf_entry_commit(self):
+        if self.updating_buf: return # again stop feedback
+        self.updating_buf = True
+
+        try: ms = max(BUF_MIN_MS, min(BUF_MAX_MS, int(self.buf_ms_var.get())))
+        except (ValueError, tk.TclError): ms = self.config.buf
+
+        self.buf_ms_var.set(ms)
+        self.buf_linear_var.set(buf_ms_to_linear(ms))
+        self.commit_buf(ms)
+        self.updating_buf = False
+
+    def commit_buf(self, ms: int):
+        self.app.push_setting("buf", ms)
+        self.tolerance_fader.configure(to=max(ms, 1))
+        
+    def on_tol_slider_move(self, val=None):
+        if self.updating_tolerance: return # and again
+        self.updating_tolerance = True
+
+        if val is not None: ms = round(float(val)) 
+        else: ms =  round(self.tol_var.get())
+
+        self.tol_var.set(ms)
+        self.app.push_setting("tolerance", ms)
+        self.updating_tolerance = False
+
+    def on_tol_entry_commit(self):
+        try: self.app.push_setting("tolerance", int(self.tol_var.get()))
+        except Exception: pass
+
+    def on_tol_toggle(self):
+        if self.tol_on.get(): self.app.push_setting("tolerance", self.tol_var.get())
+        else: self.app.push_setting("tolerance", 999999) # effectively infinite tolerance (no drift connect)
+
+    def on_gain_slider_move(self, val=None):
+        if self.updating_gain: return
+        self.updating_gain = True
+        raw = float(val) if val is not None else self.gain_var.get()
+        rounded = round(max(0.0, min(4.0, raw)), 2)
+        self.gain_var.set(rounded)
+        self.app.push_setting("gain", max(0.01, rounded))
+        self.updating_gain = False
+
+    def on_gain_entry_commit(self):
+        try:
+            val = round(float(self.gain_var.get()), 2)
+            val = max(0.0, min(4.0, val))
+            self.gain_var.set(val)
+            self.app.push_setting("gain", max(0.01, val))
+        except Exception: pass
+
+
+    def toggle_stats(self):
+        if self.stats_window and tk.Toplevel.winfo_exists(self.stats_window):
+            self.stats_window.destroy()
+            self.stats_window = None
+        else:
+            self.openstats_windowdow()
+
+    def openstats_windowdow(self):
+        w = tk.Toplevel(self.root)
+        w.title("stats")
+        w.resizable(False, False)
+        self.stats_window = w
+        ttk.Label(w, text="coming soon, maybe", padding=20).pack()
+        # TODO: stats window
+
+
+    def browse_config(self):
+        path = filedialog.askopenfilename(
+            title="select config json",
+            filetypes=[("config json files", "*.json")])
+        
+        if not path: return
+
+        try:
+            new_config = Config(path=path)
+            self.config = new_config
+            self.app = App(self.config)
+            self.wire_app_callbacks()
+            self.config_var.set(path)
+            self.mode = self.config.mode
+            self.paired = False
+            self.streaming = False
+            self.sock_was_live = False
+            self.reconnecting = False
+            self.apply_mode_layout()
+            self.refresh_device_lists()
+            self.sync_widgets_from_config()
+        except Exception as e:
+            messagebox.showerror("faied setting config from file", str(e))
+
+    def sync_widgets_from_config(self):
+        ms = self.config.buf
+        self.buf_ms_var.set(ms)
+        self.buf_linear_var.set(buf_ms_to_linear(ms))
+        self.tol_var.set(self.config.tolerance)
+        self.gain_var.set(round(self.config.gain, 2))
+        self.ch_var.set(self.config.ch)
+        self.sr_var.set(str(self.config.sr))
+        if self.mode == "transmitter": self.port_var.set(self.config.target_port) 
+        else: self.port_var.set(self.config.port)
+        saved_ip = (self.config.target_ip or "").split(".")
+        while len(saved_ip) < 4: saved_ip.append("")
+        for i, v in enumerate(self.ip_vars): v.set(saved_ip[i])
+
+
+    def update_status_bar(self):
+        if self.mode == "transmitter": tx = True
+        else: tx = False
+
+        paired = self.paired
+        stream = self.streaming
+
+        if self.app.connection is not None and self.app.connection.sock is not None: sock_live = True
+        else: sock_live = False
+
+        if stream:
+            if tx: status_str = "transmitting" 
+            else: status_str = "receiving"
+        elif paired:
+            if sock_live: status_str = "connected"
+            elif not tx: status_str = "listening"
+            elif self.reconnecting: status_str = "disconnected"
+            else: status_str = "disconnected"
+        else: status_str = "idle"
+
+        if stream and self.pop_count > 0:
+            rate = self.correction_count / self.pop_count
+            health_str = ", healthy" if rate < UNHEALTHY_THRESHOLD else ", unhealthy"
+        else: health_str = ""
+
+        self.lbl_status.configure(text=f"status: {status_str}{health_str}")
+        if self.mode == "transmitter" and self.remote_avg_ms is not None:
+            avg_ms = self.remote_avg_ms
+            error_ms = avg_ms - self.config.buf
+            avg_txt = f"avg={avg_ms:.0f}ms  error={error_ms:+.0f}ms"
+        elif self.mode == "receiver" and self.streaming:
+            avg_txt = f"avg={self.avg_ms:.0f}ms  error={self.error_ms:+.0f}ms"
+        else:
+            avg_txt = "avg=—ms  error=—ms"
+        self.lbl_avg.configure(text=avg_txt)
+
+
+
+    # poll for changes
+
+    def poll(self):
+        # detect remote start stop commands
+        if self.app.stream is not None:
+            actual = self.app.stream.running
+            if actual != self.streaming:
+                self.streaming = actual
+                self.apply_connection_state()
+
+        # detect socket becomming live (transmitter connects to receiver, if you're the receiver)
+        if self.app.connection is not None and self.app.connection.sock is not None: sock_live = True
+        else: sock_live = False
+
+        if sock_live != self.sock_was_live:
+            self.sock_was_live = sock_live
+            self.refresh_device_lists()
+            self.apply_connection_state()
+
+        if self.paired and self.app.sync:
+            self.refresh_device_lists()
+
+        if (self.streaming and self.app.stream is not None and isinstance(self.app.stream, ReceiveStream)):
+            buf = self.app.stream.buffer
+            self.avg_ms = (buf.queue.qsize() * 1024 / self.config.sr) * 1000
+            self.pop_count = buf.pop_count
+            self.correction_count = getattr(buf, "_total_corrections", 0)
+            self.error_ms = self.avg_ms - self.config.buf
+
+        self.update_status_bar()
+        self.root.after(250, self.poll)
+
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    GUI(root)
+    root.mainloop()
