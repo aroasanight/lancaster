@@ -23,6 +23,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import math
 import logging
+from sys import platform
+
 log = logging.getLogger("main")
 
 logging.basicConfig(
@@ -1243,6 +1245,15 @@ class GUI:
         self.apply_mode_layout()
         self.update_status_bar()
         self.poll()
+
+        # change app name on mac
+        if platform == 'darwin':
+            from Foundation import NSBundle
+            bundle = NSBundle.mainBundle()
+            if bundle:
+                info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+                if info and info['CFBundleName'] == 'Python':
+                    info['CFBundleName'] = "lancaster"
 
     def wire_app_callbacks(self):
         self.app.on_peer_connected = lambda: self.root.after(0, self.on_peer_connected)
