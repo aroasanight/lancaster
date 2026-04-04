@@ -133,7 +133,7 @@ def list_output_devices() -> list:
         if device["max_output_channels"] > 0
     ]
 
-
+SR_OPTIONS = ["8000", "11025", "22050", "32000", "44100", "48000", "88200", "96000", "176400", "192000"]
 
 
 #region config class
@@ -273,7 +273,7 @@ class Config:
         else: self.mode = mode
 
     def set_sr(self, sr:int):
-        if not sr in [8000, 11025, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000]: raise ValueError(f"Invalid Sample rate: {str(sr)} - must be one of 8000, 11025, 22050, 32000, 44100, 48000, 88200, 96000, 176400, or 192000")
+        if not sr in SR_OPTIONS: raise ValueError(f"Invalid Sample rate: {str(sr)} - must be one of 8000, 11025, 22050, 32000, 44100, 48000, 88200, 96000, 176400, or 192000")
         else: self.sr = sr
 
     def set_ch(self, ch:int):
