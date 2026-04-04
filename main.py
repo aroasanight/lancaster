@@ -1,3 +1,16 @@
+# 
+# lancaster main.py
+# self-contained cross-platform airplay replacement
+# 
+# created on 2026/03/30
+# 
+# it works on my machine!
+#    - Ari
+#
+
+
+
+#region imports & logging
 import json
 import socket
 import sounddevice
@@ -15,6 +28,8 @@ logging.basicConfig(
     datefmt="%H:%M:%S"
 )
 
+
+#region network functions
 
 BLOCKSIZE = 1024
 
@@ -57,6 +72,9 @@ def port_in_use(port:int):
 
 
 
+
+#region audio device functions
+
 # audio device shit
 def find_device_by_name(name:str, kind:str):
     for i, device in enumerate(sounddevice.query_devices()):
@@ -82,6 +100,8 @@ def list_output_devices() -> list:
 
 
 
+
+#region config class
 class Config:
     TRANSMITTER_KEYS = {"t_nic_ip", "target_ip", "target_port", "in_dev"}
     RECEIVER_KEYS = {"r_nic_ip", "port", "ch", "sr", "buf", "tolerance", "gain", "out_dev"}
@@ -355,10 +375,12 @@ class Config:
 
 
 
+
 # AudioInput and AudioOutput classes cobbled together with examples from
 # https://python-sounddevice.readthedocs.io/en/latest/examples.html and
 # examples on stackoverflow
 
+#region audioinput class
 class AudioInput:
     def __init__(self, config):
         self.config = config
@@ -387,6 +409,8 @@ class AudioInput:
             self._stream = None
 
 
+
+#region audiooutput class
 class AudioOutput:
     def __init__(self, config):
         self.config = config
@@ -416,6 +440,7 @@ class AudioOutput:
 
 
 
+#region playbackbuffer class
 class PlaybackBuffer:
     def __init__(self, config, on_stats=None):
         self.config  = config
@@ -531,6 +556,7 @@ class PlaybackBuffer:
 
 
 
+#region connection class
 class Connection:
     def __init__(self, config):
         self.config = config
@@ -637,6 +663,9 @@ class Connection:
         print("[Connection] Disconnected")
 
 
+
+
+#region settingssync class
 class SettingsSync:
     def __init__(self, config, connection, role:str, on_command=None, on_setting_received=None):
         self.config = config
@@ -726,6 +755,8 @@ class SettingsSync:
 
 
 
+
+#region devicemonitor class
 class DeviceMonitor:
     def __init__(self, sync, mode: str):
         if mode not in ["input", "output"]:
@@ -753,6 +784,8 @@ class DeviceMonitor:
 
 
 
+
+#region transmitstream class
 class TransmitStream:
     def __init__(self, config, connection, sync, monitor):
         self.config = config
@@ -833,6 +866,8 @@ class TransmitStream:
 
 
 
+
+#region receivestream class
 class ReceiveStream:
     def __init__(self, config, connection, sync, monitor, buffer):
         self.config = config
@@ -908,6 +943,8 @@ class ReceiveStream:
 
 
 
+
+#region app class
 class App:
     # delays before reconnect
     RECONNECT_DELAYS = [1, 2, 4, 8, 8]
