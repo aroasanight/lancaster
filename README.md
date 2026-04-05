@@ -57,9 +57,15 @@ install with `pip3 install -r requirements.txt` or just `pip` if your system is 
 
 # screenshots
 
+macOS 15.7.4 (Sequoia)
+
 <img src="https://raw.githubusercontent.com/aroasanight/lancaster/refs/heads/main/readme-assets/macos-dual.png" width="100%" alt="loopback lancaster running on macOS 15" />
 
+Linux (pop!_OS 24.04)
+
 <img src="https://raw.githubusercontent.com/aroasanight/lancaster/refs/heads/main/readme-assets/popos-dual.png" width="100%" alt="loopback lancaster running on pop!_os 24 (linux)" />
+
+Windows 11 24H2 (IoT Enterprise LTSC)
 
 <img src="https://raw.githubusercontent.com/aroasanight/lancaster/refs/heads/main/readme-assets/windows-dual.png" width="100%" alt="loopback lancaster running on windows 11" />
 
