@@ -33,3 +33,5 @@ install with `pip3 install -r requirements.txt` or just `pip` if your system is 
 # screenshots
 
 <img src="https://raw.githubusercontent.com/aroasanight/lancaster/refs/heads/main/readme-assets/macos-dual.png" width="100%" alt="loopback lancaster running on macOS" />
+
+<img src="https://raw.githubusercontent.com/aroasanight/lancaster/refs/heads/main/readme-assets/popos-dual.png" width="100%" alt="loopback lancaster running on pop!_os (linux)" />
