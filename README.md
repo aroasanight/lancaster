@@ -6,6 +6,30 @@
 
 because it **casts** audio. over a **lan**. so its a **lancaster**... please laugh
 
+# contents
+
+- [what is this?](#what-is-this) - description of this project and why I made it
+- [requirements](#requirements) - required libraries/software for lancaster to run
+- [screenshots](#screenshots) - _ooh pretty_
+- [components of the UI](#components-of-the-ui) - list of all components of the main UI
+ - [top settings](#top-settings)
+ - [network config](#network-config)
+ - [audio config](#audio-config)
+ - [buffer/gain config](#buffergain-config)
+ - [bottom buttons](#bottom-buttons)
+- [more details on the settings](#more-detail-on-the-settings)
+ - [config file path](#config-file-path)
+ - [connect/disconnect or listen/ignore](#connectdisconnect-or-listenignore)
+ - [target IP](#target-ip)
+ - [port](#port)
+ - [nic selection](#nic-selection)
+ - [input device & output device](#input-device--output-device)
+ - [channel count](#channel-count)
+ - [sample rate](#channel-count)
+ - [buffer size](#buffer-size)
+ - [tolerance](#tolerance)
+ - [gain](#gain)
+
 # what is this?
 
 fairly simple(ish) portable cross-platform python script for transmitting/recieving audio over a local network, kinda like airplay/dante/airfoil just without the paywalls, and/or hardware/brand requirements, and with more deep customisation. 
@@ -45,25 +69,25 @@ install with `pip3 install -r requirements.txt` or just `pip` if your system is 
 from top to bottom - scroll down to the "more detail" section if you want to know more
 
 ### top settings
-- config file path
+- [config file path](#config-file-path)
 - mode toggle
-- connect/disconnect buttons to connect to a listening receiver (these change to listen/ignore in receiver mode)
+- [connect/disconnect](#connectdisconnect-or-listenignore) buttons to connect to a listening receiver (these change to listen/ignore in receiver mode)
 
 ### network config
-- target IP (only applicable in transmitter mode)
-- port (this changes to open port on receiver)
-- nic selection
+- [target IP](#target-ip) (only applicable in transmitter mode)
+- [port](#port) (this changes to open port on receiver)
+- [nic selection](#nic-selection)
 
 ### audio config
-- input device (configurable on transmitter at all times, and on reciever when paired to a transmitter)
-- output device (configureable on reciever at all times, and on transmitter when paired to a reciever)
-- channel count
-- sample rate
+- [input device](#input-device--output-device) (configurable on transmitter at all times, and on reciever when paired to a transmitter)
+- [output device](#input-device--output-device) (configureable on reciever at all times, and on transmitter when paired to a reciever)
+- [channel count](#channel-count)
+- [sample rate](#channel-count)
 
 ### buffer/gain config
-- buffer size
-- tolerance
-- gain
+- [buffer size](#buffer-size)
+- [tolerance](#tolerance)
+- [gain](#gain)
 
 ### bottom buttons
 - start/stop (start/stop transmission once devices are paired, can be pressed from either device)
@@ -73,7 +97,7 @@ from top to bottom - scroll down to the "more detail" section if you want to kno
 
 # more detail on the settings
 
-### config file
+### config file path
 - currently requires you to select an existing file
 - if you need a second save file, copy your existing config and edit in a text editor or download sample-config.json from this repo
 - data for both transmitter and reciever modes are stored in the same file
