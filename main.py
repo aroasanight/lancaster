@@ -1248,12 +1248,15 @@ class GUI:
 
         # change app name on mac
         if platform == 'darwin':
-            from Foundation import NSBundle
-            bundle = NSBundle.mainBundle()
-            if bundle:
-                info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
-                if info and info['CFBundleName'] == 'Python':
-                    info['CFBundleName'] = "lancaster"
+            try:
+                from Foundation import NSBundle
+                bundle = NSBundle.mainBundle()
+                if bundle:
+                    info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+                    if info and info['CFBundleName'] == 'Python':
+                        info['CFBundleName'] = "lancaster"
+            except ModuleNotFoundError:
+                pass
 
     def wire_app_callbacks(self):
         self.app.on_peer_connected = lambda: self.root.after(0, self.on_peer_connected)
