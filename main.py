@@ -1255,7 +1255,7 @@ class GUI:
                     info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
                     if info and info['CFBundleName'] == 'Python':
                         info['CFBundleName'] = "lancaster"
-            except ModuleNotFoundError:
+            except Exception:
                 pass
 
     def wire_app_callbacks(self):
