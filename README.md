@@ -2,8 +2,7 @@
 
 > oh some tests are failing? lets remove the bad tests!!
 
-**IMPORTANT:**
-I highly doubt anybody will interact with this repo whilst I'm working on it but I do feel the need to mention that, since this is part of my coursework, until the project has been submitted & graded, I will not be looking at or accepting pull requests/issues etc, since this does have to be my work and my work only. It's public since it's something I find useful and so someone else somewhere probably will as well, and once I've completed the course I will start accepting stuff :)
+hi sir
 
 <img src="https://www.lancaster.ac.uk/media/lancaster-university/content-assets/images/external-relations/hero-background-panel-and-simple-image/Lancaster-Castle-skyline-landing-hero.jpg" width="100%" alt="Lancaster Panorama" />
 
